@@ -31,7 +31,7 @@ async function boot() {
   }
   const { user, tenant } = state.me;
   clear($("#who")).append(h("b", {}, user?.name ?? ""), tenant.name, " · ", user?.role ?? "");
-  document.title = `${tenant.name} · WA Platform`;
+  document.title = `${tenant.name} · AI Platform`;
   state.numbers = (await api.get("/v1/numbers")).data;
   updateBanner();
   await refreshBalance();

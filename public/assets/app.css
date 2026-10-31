@@ -228,3 +228,4 @@ pre.code { background: var(--panel-2); border: 1px solid var(--line); border-rad
 .card h3 { margin: 0 0 10px; font-size: 15px; }
 .card > * + * { margin-top: 10px; }
 .grid2 > .wide { grid-column: 1 / -1; }
+.logo-mark { font-size: 12px; letter-spacing: -0.02em; }

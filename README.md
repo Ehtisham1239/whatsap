@@ -1,4 +1,4 @@
-# wa-platform
+# AI Platform (wa-platform)
 
 A multi-tenant WhatsApp Business messaging API built on the WhatsApp Cloud API and the Supabase Postgres project **wa-platform** (`wbrkkiqttxvhjrwuaipw`).
 
