@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Sign in · WA Platform</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/auth.js"></script>
+</head>
+<body class="auth-body">
+  <div class="auth">
+    <aside class="auth-hero" aria-hidden="true">
+      <div class="logo light"><span class="logo-mark">W</span> WA Platform</div>
+      <div class="hero-copy">
+        <h1>Every customer conversation on WhatsApp, in one place.</h1>
+        <p>Reply from a shared team inbox, send approved template messages, and see what was delivered and read.</p>
+      </div>
+      <div class="hero-chat">
+        <div class="hb in">Hi! Is my order on the way? 📦</div>
+        <div class="hb out">Yes! It ships today. Tracking: #A1042 <span>✓✓</span></div>
+        <div class="hb in">Great, thank you 🙏</div>
+      </div>
+      <ul class="hero-points">
+        <li>Shared inbox with notes and assignments</li>
+        <li>Templates, scheduling and delivery tracking</li>
+        <li>Prepaid credits with automatic refunds</li>
+      </ul>
+    </aside>
+    <main class="auth-main">
+      <form class="auth-card" id="login-form" novalidate>
+        <div class="logo mobile-only"><span class="logo-mark" aria-hidden="true">W</span> WA Platform</div>
+        <h2>Welcome back</h2>
+        <p class="muted">Sign in to your workspace.</p>
+        <label>Email <input name="email" type="email" autocomplete="email" required autofocus></label>
+        <label>Password
+          <span class="pw"><input name="password" type="password" autocomplete="current-password" required><button type="button" class="pw-toggle" aria-label="Show password">Show</button></span>
+        </label>
+        <p class="error-text small" id="form-error" role="alert"></p>
+        <button class="btn primary block" type="submit">Sign in</button>
+        <p class="small muted center">Forgot your password? Ask your workspace owner to reset it from Team.</p>
+        <p class="center">New here? <a href="/signup">Create an account</a></p>
+      </form>
+    </main>
+  </div>
+</body>
+</html>

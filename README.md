@@ -8,6 +8,30 @@ Tenants (your customers) get API keys and send WhatsApp messages from their own 
 - Plain `node:http` server and `node:test` tests
 - No Supabase client keys are used. The server connects to Postgres directly, and RLS (enabled, no policies) blocks the public `anon`/`authenticated` roles.
 
+## Dashboard
+
+| Page | Who |
+| --- | --- |
+| `/signup`, `/login` | Businesses create a workspace (trial tenant + owner account) and sign in with email and password. |
+| `/app` | The workspace: Dashboard (7-day stats, setup checklist), Inbox (shared conversations, replies, templates, notes, resolve/block, media), Contacts, Templates (sync), Wallet (ledger), Developers (API keys, webhooks; owners/admins), Team (add teammates, roles, remove access), Settings (password, numbers). |
+| `/console` | Platform operator (ADMIN_TOKEN): tenants, credits, connecting WhatsApp numbers, keys, webhooks. |
+
+Sessions are HttpOnly, SameSite=Lax cookies (7 days, sliding); only a SHA-256 of the token is stored. Cookie-authenticated writes need `X-Requested-With: fetch` and a same-origin `Origin`, which blocks cross-site requests. Passwords use scrypt. Roles: **owner** (everything), **admin** (everything except owners), **agent** (inbox, contacts, templates, wallet). The pages are plain HTML, CSS and ES modules with no build step, served under a CSP that forbids inline script and style.
+
+## Deploy on Vercel
+
+`api/index.js` wraps the same app for Vercel Functions, and `vercel.json` rewrites every path to it. Set these Environment Variables on the Vercel project:
+
+| Variable | Notes |
+| --- | --- |
+| `DATABASE_URL` | Supabase wa-platform → Connect → **Transaction pooler** (port 6543) URI with the database password |
+| `TOKEN_ENCRYPTION_KEY`, `API_KEY_PEPPER`, `ADMIN_TOKEN` | Random secrets (see `.env.example`); never rotate the first two casually |
+| `CRON_SECRET` | ≥ 16 chars. Vercel Cron sends it to `/internal/cron` |
+| `META_APP_SECRET`, `META_VERIFY_TOKEN` | Optional until WhatsApp is connected; the webhook answers 503 without them |
+| `SIGNUP_CREDITS`, `ALLOW_SIGNUP`, `PRICE_*` | Optional |
+
+Vercel Hobby crons run once a day, which only covers cleanup. Scheduled messages and the stuck-send sweeper need `/internal/cron` called every minute: use a Pro cron (`* * * * *`), Supabase `pg_cron` + `pg_net`, or any external scheduler sending `Authorization: Bearer $CRON_SECRET`. If any required variable is missing, every request returns 503 listing the missing names.
+
 ## Run locally
 
 ```bash
@@ -15,6 +39,7 @@ npm install
 cp .env.example .env   # fill in the values
 npm test               # unit + service + HTTP tests (in-process Postgres, no network)
 npm run test:smoke     # starts the real server against a local Postgres + fake Graph API
+npm run test:ui        # Chromium journey: signup → inbox → team → API keys → password change
 npm run migrate        # applies db/migrations to DATABASE_URL (a no-op on wa-platform today)
 npm start              # serves on PORT and runs the background workers
 ```
@@ -114,4 +139,5 @@ Run one instance with `RUN_WORKERS=true`. The scheduled-send claim uses `FOR UPD
 - Tenant webhook deliveries are best effort (3 attempts in-process, no durable outbox).
 - Endpoint URLs are checked when registered; DNS that later resolves to a private address is not re-checked at delivery.
 - Inbound media is not copied to storage; it is fetched from Meta on demand and becomes unavailable when Meta expires it.
-- There is no dashboard UI yet; the API is the product surface.
+- Teammates get an initial password from their owner; there is no email delivery, so no self-service password reset or invitations by email yet.
+- Connecting a WhatsApp number is done by the operator (no Meta Embedded Signup yet).

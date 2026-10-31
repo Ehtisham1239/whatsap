@@ -25,8 +25,8 @@ test("loads a valid configuration with defaults", () => {
 
 test("reports every problem at once", () => {
   assert.throws(
-    () => loadConfig({ ADMIN_TOKEN: "short", PORT: "70000", DEFAULT_COUNTRY_CODE: "+92", PRICE_MARKETING: "x", META_GRAPH_VERSION: "23" }),
-    (e) => ["DATABASE_URL", "ADMIN_TOKEN", "API_KEY_PEPPER", "META_APP_SECRET", "META_VERIFY_TOKEN", "TOKEN_ENCRYPTION_KEY", "PORT", "DEFAULT_COUNTRY_CODE", "PRICE_MARKETING", "META_GRAPH_VERSION"].every((n) => e.message.includes(n)),
+    () => loadConfig({ ADMIN_TOKEN: "short", PORT: "70000", DEFAULT_COUNTRY_CODE: "+92", PRICE_MARKETING: "x", META_GRAPH_VERSION: "23", META_VERIFY_TOKEN: "short", CRON_SECRET: "short", SIGNUP_CREDITS: "-1" }),
+    (e) => ["DATABASE_URL", "ADMIN_TOKEN", "API_KEY_PEPPER", "META_VERIFY_TOKEN", "CRON_SECRET", "SIGNUP_CREDITS", "TOKEN_ENCRYPTION_KEY", "PORT", "DEFAULT_COUNTRY_CODE", "PRICE_MARKETING", "META_GRAPH_VERSION"].every((n) => e.message.includes(n)),
   );
 });
 
@@ -35,4 +35,14 @@ test("META_API_BASE_URL allows https origins and plain http only for localhost",
   assert.equal(loadConfig({ ...valid, META_API_BASE_URL: "http://127.0.0.1:9999" }).metaBaseUrl, "http://127.0.0.1:9999");
   assert.throws(() => loadConfig({ ...valid, META_API_BASE_URL: "http://evil.example" }), /META_API_BASE_URL/);
   assert.throws(() => loadConfig({ ...valid, META_API_BASE_URL: "https://graph.facebook.com/v1" }), /META_API_BASE_URL/);
+});
+
+test("WhatsApp and cron settings are optional", () => {
+  const { META_APP_SECRET, META_VERIFY_TOKEN, ...rest } = valid;
+  const c = loadConfig(rest);
+  assert.equal(c.metaAppSecret, null);
+  assert.equal(c.metaVerifyToken, null);
+  assert.equal(c.cronSecret, null);
+  assert.equal(c.cookieSecure, true);
+  assert.equal(c.allowSignup, true);
 });

@@ -173,3 +173,8 @@ test("keywordIntent", () => {
   assert.equal(keywordIntent("start"), "opt_in");
   assert.equal(keywordIntent(undefined), null);
 });
+
+test("without META_APP_SECRET the webhook answers 503", async () => {
+  const unconfigured = createInboundService({ db: t.db, appSecret: null });
+  await assert.rejects(unconfigured.handle(Buffer.from("{}"), "sha256=x"), { status: 503, code: "whatsapp_not_configured" });
+});

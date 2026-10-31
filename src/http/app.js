@@ -4,9 +4,10 @@ import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as repo from "../db/repo.js";
 import { safeEqual } from "../lib/crypto.js";
-import { AppError, badRequest, notFound, unauthorized } from "../lib/errors.js";
+import { AppError, badRequest, forbidden, notFound, unauthorized } from "../lib/errors.js";
 import { normalizePhone } from "../lib/phone.js";
 import { presentMessage } from "../services/notifier.js";
+import { requireManager, SESSION_TTL_MS } from "../services/users.js";
 import { decodeCursor, encodeCursor } from "./cursor.js";
 import { createRateLimiter } from "./rate-limit.js";
 import { createRouter } from "./router.js";
@@ -93,6 +94,42 @@ function cursorParam(value) {
   return c;
 }
 
+export const SESSION_COOKIE = "wa_session";
+
+export function parseCookies(header) {
+  const out = {};
+  for (const part of String(header || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i < 1) continue;
+    const k = part.slice(0, i).trim();
+    if (!(k in out)) out[k] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+
+function sessionCookie(value, { secure, maxAgeSeconds }) {
+  return [`${SESSION_COOKIE}=${value}`, "Path=/", "HttpOnly", "SameSite=Lax", `Max-Age=${maxAgeSeconds}`, ...(secure ? ["Secure"] : [])].join("; ");
+}
+
+/**
+ * Cookie-authenticated writes must carry `X-Requested-With: fetch` (a custom
+ * header other sites cannot send without a CORS preflight, which we never
+ * grant) and, when present, an Origin matching the Host.
+ */
+function checkCsrf(req) {
+  if (req.headers["x-requested-with"] !== "fetch") throw forbidden("csrf_failed", "Missing X-Requested-With header");
+  const origin = req.headers.origin;
+  if (origin) {
+    let host;
+    try {
+      host = new URL(origin).host;
+    } catch {
+      host = null;
+    }
+    if (host !== req.headers.host) throw forbidden("csrf_failed", "Cross-site request blocked");
+  }
+}
+
 function bearer(req) {
   const h = req.headers.authorization || "";
   return h.startsWith("Bearer ") ? h.slice(7).trim() : null;
@@ -103,7 +140,7 @@ function bearer(req) {
  * services: { db, accounts, messaging, inbound, templates }
  * config:   { adminToken, metaVerifyToken, trustProxy, rateLimit }
  */
-export function createApp({ db, accounts, messaging, inbound, templates, media }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
+export function createApp({ db, accounts, messaging, inbound, templates, media, users }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
   const router = createRouter();
   const apiLimiter = createRateLimiter(config.rateLimit ?? { capacity: 50, refillPerSecond: 20 });
   const adminLimiter = createRateLimiter(config.adminRateLimit ?? { capacity: 20, refillPerSecond: 2 });
@@ -115,12 +152,29 @@ export function createApp({ db, accounts, messaging, inbound, templates, media }
     if (!r.ok) throw Object.assign(new AppError(429, "rate_limited", "Too many requests"), { headers: { "retry-after": String(r.retryAfterSeconds) } });
   }
 
-  const api = (handler) => async (ctx) => {
+  const cookieSecure = config.cookieSecure !== false;
+  const authLimiter = createRateLimiter(config.authRateLimit ?? { capacity: 10, refillPerSecond: 0.2 });
+
+  /**
+   * Tenant routes accept an API key (servers) or a dashboard session cookie.
+   * sessionOnly: dashboard-only (account management). manager: owner/admin only.
+   */
+  const api = (handler, { sessionOnly = false, manager = false } = {}) => async (ctx) => {
     const key = bearer(ctx.req);
-    if (!key) throw unauthorized();
-    limit(apiLimiter, `ip:${clientIp(ctx.req)}:${key.slice(0, 12)}`);
-    ctx.auth = await accounts.authenticate(key);
-    limit(apiLimiter, `key:${ctx.auth.id}`);
+    if (key) {
+      if (sessionOnly) throw forbidden("session_required", "This endpoint is only available in the dashboard");
+      limit(apiLimiter, `ip:${clientIp(ctx.req)}:${key.slice(0, 12)}`);
+      ctx.auth = await accounts.authenticate(key);
+      limit(apiLimiter, `key:${ctx.auth.id}`);
+    } else {
+      const token = parseCookies(ctx.req.headers.cookie)[SESSION_COOKIE];
+      if (!token || !users) throw unauthorized();
+      limit(apiLimiter, `ip:${clientIp(ctx.req)}`);
+      if (ctx.req.method !== "GET") checkCsrf(ctx.req);
+      ctx.auth = await users.authenticate(token);
+      limit(apiLimiter, `user:${ctx.auth.user_id}`);
+    }
+    if (manager) requireManager(ctx.auth);
     return handler(ctx);
   };
 
@@ -136,14 +190,47 @@ export function createApp({ db, accounts, messaging, inbound, templates, media }
     if (!f) throw notFound("Page not found");
     return { status: 200, binary: f.body, headers: { "content-type": f.type, "content-security-policy": PAGE_CSP } };
   };
-  router.get("/", page("index.html"));
+  router.get("/", () => ({ status: 302, text: "", headers: { location: "/app" } }));
+  router.get("/login", page("login.html"));
+  router.get("/signup", page("signup.html"));
+  router.get("/app", page("app.html"));
   router.get("/console", page("console.html"));
+
+  // ---- dashboard accounts ----
+  const setSession = (token) => ({ "set-cookie": sessionCookie(token, { secure: cookieSecure, maxAgeSeconds: Math.floor(SESSION_TTL_MS / 1000) }) });
+  router.post("/auth/signup", async ({ req, body }) => {
+    checkCsrf(req);
+    limit(authLimiter, `signup:${clientIp(req)}`);
+    const r = await users.signup(body, { userAgent: req.headers["user-agent"] });
+    return { status: 201, body: { user: r.user, tenant: { id: r.tenant.id, name: r.tenant.name, status: r.tenant.status } }, headers: setSession(r.token) };
+  });
+  router.post("/auth/login", async ({ req, body }) => {
+    checkCsrf(req);
+    limit(authLimiter, `login-ip:${clientIp(req)}`);
+    if (typeof body.email === "string") limit(authLimiter, `login-email:${body.email.trim().toLowerCase()}`);
+    const r = await users.login(body, { userAgent: req.headers["user-agent"] });
+    return { status: 200, body: { user: r.user }, headers: setSession(r.token) };
+  });
+  router.post("/auth/logout", async ({ req }) => {
+    checkCsrf(req);
+    await users.logout(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
+    return { status: 200, body: { signed_out: true }, headers: { "set-cookie": sessionCookie("", { secure: cookieSecure, maxAgeSeconds: 0 }) } };
+  });
   router.get("/assets/:file", async ({ params }) => {
     if (!/^[a-z0-9-]+\.(css|js|svg|png|ico)$/.test(params.file)) throw notFound("Asset not found");
     const f = await readStatic(join("assets", params.file), config.publicDir ?? PUBLIC_DIR);
     if (!f) throw notFound("Asset not found");
     return { status: 200, binary: f.body, headers: { "content-type": f.type, "cache-control": "no-cache" } };
   });
+
+  // ---- scheduled jobs (Vercel Cron or any scheduler; Bearer CRON_SECRET) ----
+  const cron = async ({ req }) => {
+    if (!config.cronSecret || !safeEqual(bearer(req) ?? "", config.cronSecret)) throw unauthorized("Missing or invalid cron secret");
+    if (!config.runMaintenance) throw new AppError(503, "not_configured", "Maintenance is not available");
+    return { status: 200, body: await config.runMaintenance() };
+  };
+  router.get("/internal/cron", cron);
+  router.post("/internal/cron", cron);
 
   // ---- health ----
   router.get("/health", () => ({ status: 200, body: { status: "ok" } }));
@@ -305,6 +392,35 @@ export function createApp({ db, accounts, messaging, inbound, templates, media }
     "/v1/conversations/:id/notes",
     api(async ({ auth, params, body }) => ({ status: 201, body: { message: await messaging.addNote(auth, params.id, body.text) } })),
   );
+
+  // ---- account self-service (dashboard sessions) ----
+  router.get(
+    "/v1/me",
+    api(async ({ auth }) => {
+      const tenant = auth.tenant ?? { id: auth.tenant_id, name: auth.tenant_name, status: auth.tenant_status };
+      return { status: 200, body: { user: auth.user ?? null, tenant, balance: await repo.getBalance(db, auth.tenant_id) } };
+    }),
+  );
+  router.get(
+    "/v1/stats",
+    api(async ({ auth, url }) => {
+      const days = intParam(url.searchParams.get("days"), { def: 7, min: 1, max: 90, name: "days" });
+      const at = now();
+      const tenant = await repo.getTenant(db, auth.tenant_id);
+      const since = new Date(at.getTime() - days * 86400_000);
+      return { status: 200, body: { days, balance: await repo.getBalance(db, auth.tenant_id), ...(await repo.tenantStats(db, auth.tenant_id, { since, now: at, timeZone: tenant?.timezone || "UTC" })) } };
+    }),
+  );
+  router.post("/v1/me/password", api(async ({ auth, body }) => ({ status: 200, body: await users.changePassword(auth, body) }), { sessionOnly: true }));
+  router.get("/v1/users", api(async ({ auth }) => ({ status: 200, body: { data: await users.listTeam(auth) } }), { sessionOnly: true }));
+  router.post("/v1/users", api(async ({ auth, body }) => ({ status: 201, body: { user: await users.addTeammate(auth, body) } }), { sessionOnly: true, manager: true }));
+  router.patch("/v1/users/:id", api(async ({ auth, params, body }) => ({ status: 200, body: { user: await users.updateTeammate(auth, params.id, body) } }), { sessionOnly: true, manager: true }));
+  router.get("/v1/api-keys", api(async ({ auth }) => ({ status: 200, body: { data: await accounts.listApiKeys(auth.tenant_id) } }), { sessionOnly: true, manager: true }));
+  router.post("/v1/api-keys", api(async ({ auth, body }) => ({ status: 201, body: { api_key: await accounts.issueApiKey(auth.tenant_id, { name: body.name, waba_connection_id: body.waba_connection_id }) } }), { sessionOnly: true, manager: true }));
+  router.delete("/v1/api-keys/:id", api(async ({ auth, params }) => ({ status: 200, body: { api_key: await accounts.revokeApiKey(auth.tenant_id, params.id) } }), { sessionOnly: true, manager: true }));
+  router.get("/v1/webhook-endpoints", api(async ({ auth }) => ({ status: 200, body: { data: await accounts.listWebhookEndpoints(auth.tenant_id) } }), { sessionOnly: true, manager: true }));
+  router.post("/v1/webhook-endpoints", api(async ({ auth, body }) => ({ status: 201, body: { webhook_endpoint: await accounts.addWebhookEndpoint(auth.tenant_id, body) } }), { sessionOnly: true, manager: true }));
+  router.patch("/v1/webhook-endpoints/:id", api(async ({ auth, params, body }) => ({ status: 200, body: { webhook_endpoint: await accounts.setWebhookEndpointActive(auth.tenant_id, params.id, body.active) } }), { sessionOnly: true, manager: true }));
 
   // ---- operator admin API ----
   router.get(

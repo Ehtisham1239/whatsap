@@ -11,15 +11,18 @@
     "start": "node src/index.js",
     "test": "node --test --test-reporter=spec \"test/**/*.test.js\"",
     "test:coverage": "node --test --experimental-test-coverage \"test/**/*.test.js\"",
-    "lint": "node --check src/index.js && for f in $(find src -name \"*.js\"); do node --check $f || exit 1; done",
+    "lint": "for f in $(find src api public/assets -name '*.js'); do node --check $f || exit 1; done",
     "test:smoke": "node scripts/smoke.mjs",
-    "migrate": "node src/index.js migrate"
+    "migrate": "node src/index.js migrate",
+    "test:ui": "node scripts/e2e-ui.mjs"
   },
   "dependencies": {
+    "@vercel/functions": "^3.10.5",
     "pg": "8.23.1"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.13",
-    "@electric-sql/pglite-socket": "^0.2.16"
+    "@electric-sql/pglite-socket": "^0.2.16",
+    "playwright": "1.63.0"
   }
 }

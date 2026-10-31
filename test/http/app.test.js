@@ -292,7 +292,10 @@ test("inbound media downloads as an attachment with a safe file name", async () 
 
 describe("dashboard pages", () => {
   test("pages are served with a strict CSP; assets with their types", async () => {
-    for (const path of ["/", "/console"]) {
+    const root = await fetch(`${base}/`, { redirect: "manual" });
+    assert.equal(root.status, 302);
+    assert.equal(root.headers.get("location"), "/app");
+    for (const path of ["/login", "/signup", "/app", "/console"]) {
       const res = await fetch(base + path);
       assert.equal(res.status, 200);
       assert.match(res.headers.get("content-type"), /text\/html/);
@@ -304,14 +307,14 @@ describe("dashboard pages", () => {
       assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), "no inline scripts");
       assert.ok(!/\sstyle=/i.test(html), "no inline styles");
     }
-    const js = await fetch(`${base}/assets/inbox.js`);
+    const js = await fetch(`${base}/assets/app.js`);
     assert.equal(js.status, 200);
     assert.match(js.headers.get("content-type"), /text\/javascript/);
     assert.match((await fetch(`${base}/assets/app.css`)).headers.get("content-type"), /text\/css/);
   });
 
   test("path traversal and unknown assets are 404", async () => {
-    for (const p of ["/assets/..%2Fpackage.json", "/assets/../src/config.js", "/assets/%2e%2e%2fconsole.html", "/assets/missing.js", "/assets/inbox.JS", "/assets/x.json"]) {
+    for (const p of ["/assets/..%2Fpackage.json", "/assets/../src/config.js", "/assets/%2e%2e%2fconsole.html", "/assets/missing.js", "/assets/app.JS", "/assets/x.json"]) {
       const res = await fetch(base + p);
       assert.equal(res.status, 404, p);
     }
@@ -348,4 +351,23 @@ describe("dashboard API additions", () => {
     assert.equal((await call("POST", `/v1/conversations/${conv.id}/notes`, { token: key, body: { text: " " } })).status, 400);
     assert.equal((await call("POST", "/v1/conversations/conv_missing/notes", { token: key, body: { text: "x" } })).status, 404);
   });
+});
+
+test("cron endpoint requires the secret and runs maintenance", async () => {
+  let runs = 0;
+  const s = createServer(createApp({ db: t.db }, { cronSecret: "cron-secret-1234567890", runMaintenance: async () => (runs++, { scheduled: 0, stuck: 0, purged: 0 }) }));
+  await new Promise((r) => s.listen(0, "127.0.0.1", r));
+  const u = `http://127.0.0.1:${s.address().port}/internal/cron`;
+  const statuses = [(await fetch(u)).status, (await fetch(u, { headers: { authorization: "Bearer wrong" } })).status];
+  const ok = await fetch(u, { headers: { authorization: "Bearer cron-secret-1234567890" } });
+  const unset = createServer(createApp({ db: t.db }, {}));
+  await new Promise((r) => unset.listen(0, "127.0.0.1", r));
+  const disabled = (await fetch(`http://127.0.0.1:${unset.address().port}/internal/cron`, { headers: { authorization: "Bearer " } })).status;
+  await new Promise((r) => s.close(r));
+  await new Promise((r) => unset.close(r));
+  assert.deepEqual(statuses, [401, 401]);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { scheduled: 0, stuck: 0, purged: 0 });
+  assert.equal(runs, 1);
+  assert.equal(disabled, 401, "no secret configured means the endpoint is closed");
 });

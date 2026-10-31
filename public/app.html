@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>WA Platform</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="app-shell" id="shell">
+    <aside class="side" aria-label="Main navigation">
+      <div class="logo"><span class="logo-mark" aria-hidden="true">W</span> WA Platform</div>
+      <a href="#/dashboard" data-route="dashboard"><span class="ico" aria-hidden="true">▦</span>Dashboard</a>
+      <a href="#/inbox" data-route="inbox"><span class="ico" aria-hidden="true">✉</span>Inbox<span class="count hidden" id="open-count"></span></a>
+      <a href="#/contacts" data-route="contacts"><span class="ico" aria-hidden="true">☺</span>Contacts</a>
+      <a href="#/templates" data-route="templates"><span class="ico" aria-hidden="true">▤</span>Templates</a>
+      <a href="#/wallet" data-route="wallet"><span class="ico" aria-hidden="true">◎</span>Wallet</a>
+      <a href="#/developers" data-route="developers"><span class="ico" aria-hidden="true">⌘</span>Developers</a>
+      <a href="#/team" data-route="team"><span class="ico" aria-hidden="true">⚇</span>Team</a>
+      <a href="#/settings" data-route="settings"><span class="ico" aria-hidden="true">⚙</span>Settings</a>
+      <div class="bottom">
+        <div class="who" id="who"></div>
+        <a href="#" id="signout"><span class="ico" aria-hidden="true">⎋</span>Sign out</a>
+      </div>
+    </aside>
+    <div class="app-main">
+      <header class="app-top">
+        <button type="button" class="btn small menu-btn" id="menu" aria-label="Open menu" aria-expanded="false">☰</button>
+        <h1 id="title">Dashboard</h1>
+        <span class="spacer"></span>
+        <span class="balance" id="balance" title="Wallet balance"></span>
+        <button class="btn primary small" type="button" id="new-message">New message</button>
+      </header>
+      <div>
+        <div id="banner" class="banner hidden" role="status"></div>
+        <main id="main">
+          <section id="view-dashboard" class="page"></section>
+          <section id="view-inbox" class="inbox hidden">
+            <aside class="sidebar" aria-label="Conversations">
+              <div class="tools">
+                <input id="search" type="search" placeholder="Search name, number or text" aria-label="Search conversations">
+                <div class="tabs" role="group" aria-label="Filter by status">
+                  <button type="button" data-status="open" aria-pressed="true">Open</button>
+                  <button type="button" data-status="pending" aria-pressed="false">Pending</button>
+                  <button type="button" data-status="resolved" aria-pressed="false">Resolved</button>
+                  <button type="button" data-status="" aria-pressed="false">All</button>
+                </div>
+              </div>
+              <div></div>
+              <div id="conv-list" class="conv-list"></div>
+            </aside>
+            <section class="thread" id="thread" aria-live="polite"><div class="empty">Select a conversation</div></section>
+          </section>
+          <section id="view-contacts" class="page hidden"></section>
+          <section id="view-templates" class="page hidden"></section>
+          <section id="view-wallet" class="page hidden"></section>
+          <section id="view-developers" class="page hidden"></section>
+          <section id="view-team" class="page hidden"></section>
+          <section id="view-settings" class="page hidden"></section>
+        </main>
+      </div>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast" class="toast" role="status"></div>
+</body>
+</html>

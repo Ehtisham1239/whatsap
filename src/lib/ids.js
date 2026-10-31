@@ -12,6 +12,7 @@ export const ID_PREFIXES = Object.freeze({
   message: "msg",
   ledger: "led",
   webhookEndpoint: "whe",
+  user: "usr",
 });
 
 /** Returns `<prefix>_<20 random base32 chars>` (100 bits of entropy). */

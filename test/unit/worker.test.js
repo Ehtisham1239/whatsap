@@ -27,7 +27,7 @@ test("workers tick on their intervals, never overlap, and stop", async () => {
     assert.ok(calls.stuck >= 1);
     mock.timers.tick(10);
     await new Promise((r) => setImmediate(r));
-    assert.equal(calls.purged, 2, "idempotency keys and webhook events purged");
+    assert.equal(calls.purged, 3, "idempotency keys, webhook events and expired sessions purged");
     assert.ok(logs.some((l) => l.msg === "worker scheduled" && l.count === 3));
     w.stop();
     const before = calls.scheduled;

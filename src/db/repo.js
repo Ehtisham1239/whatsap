@@ -399,3 +399,108 @@ export async function listWebhookEndpoints(q, tenantId) {
 export async function setWebhookEndpointActive(q, tenantId, id, active) {
   return one(await q.query("update webhook_endpoints set active = $3 where tenant_id = $1 and id = $2 returning id, tenant_id, url, events, active, created_at", [tenantId, id, active]));
 }
+
+// ---- dashboard users & sessions ---------------------------------------------
+
+const USER_PUBLIC = "u.id, u.tenant_id, u.email, u.name, u.role, u.disabled_at, u.last_login_at, u.created_at";
+
+export async function insertUser(q, { tenantId, email, name, role, passwordHash, now }) {
+  return one(
+    await q.query(
+      `insert into users (id, tenant_id, email, name, role, password_hash, created_at) values ($1,$2,$3,$4,$5,$6,$7)
+       returning id, tenant_id, email, name, role, disabled_at, last_login_at, created_at`,
+      [newId(ID_PREFIXES.user), tenantId, email, name, role, passwordHash, now],
+    ),
+  );
+}
+
+export async function findUserByEmail(q, email) {
+  return one(await q.query("select u.*, t.status as tenant_status from users u join tenants t on t.id = u.tenant_id where u.email = $1", [email]));
+}
+
+export async function getUser(q, tenantId, id) {
+  return one(await q.query(`select ${USER_PUBLIC} from users u where u.tenant_id = $1 and u.id = $2`, [tenantId, id]));
+}
+
+export async function getUserWithHash(q, id) {
+  return one(await q.query("select * from users where id = $1", [id]));
+}
+
+export async function listUsers(q, tenantId) {
+  return (await q.query(`select ${USER_PUBLIC} from users u where u.tenant_id = $1 order by u.created_at`, [tenantId])).rows;
+}
+
+export async function countActiveOwners(q, tenantId) {
+  return one(await q.query("select count(*)::int as n from users where tenant_id = $1 and role = 'owner' and disabled_at is null", [tenantId])).n;
+}
+
+export async function updateUser(q, tenantId, id, fields) {
+  const allowed = ["name", "role", "disabled_at", "password_hash", "last_login_at"];
+  const keys = Object.keys(fields).filter((k) => allowed.includes(k));
+  if (!keys.length) return getUser(q, tenantId, id);
+  const sets = keys.map((k, i) => `${k} = $${i + 3}`).join(", ");
+  return one(await q.query(`update users u set ${sets} where u.tenant_id = $1 and u.id = $2 returning ${USER_PUBLIC}`, [tenantId, id, ...keys.map((k) => fields[k])]));
+}
+
+export async function insertSession(q, { tokenHash, userId, now, expiresAt, userAgent }) {
+  await q.query("insert into user_sessions (token_hash, user_id, created_at, expires_at, last_seen_at, user_agent) values ($1,$2,$3,$4,$3,$5)", [tokenHash, userId, now, expiresAt, userAgent ?? null]);
+}
+
+/** Session joined with its user and tenant; null when unknown, expired or disabled. */
+export async function findSession(q, tokenHash, now) {
+  return one(
+    await q.query(
+      `select s.token_hash, s.expires_at, s.last_seen_at, u.id as user_id, u.tenant_id, u.email, u.name, u.role, t.status as tenant_status, t.name as tenant_name
+         from user_sessions s join users u on u.id = s.user_id join tenants t on t.id = u.tenant_id
+        where s.token_hash = $1 and s.expires_at > $2 and u.disabled_at is null`,
+      [tokenHash, now],
+    ),
+  );
+}
+
+export async function touchSession(q, tokenHash, { now, expiresAt }) {
+  await q.query("update user_sessions set last_seen_at = $2, expires_at = $3 where token_hash = $1", [tokenHash, now, expiresAt]);
+}
+
+export async function deleteSession(q, tokenHash) {
+  await q.query("delete from user_sessions where token_hash = $1", [tokenHash]);
+}
+
+export async function deleteUserSessions(q, userId, { exceptHash } = {}) {
+  await q.query("delete from user_sessions where user_id = $1 and token_hash <> coalesce($2, '')", [userId, exceptHash ?? null]);
+}
+
+export async function purgeExpiredSessions(q, now) {
+  return (await q.query("delete from user_sessions where expires_at < $1", [now])).rowCount ?? 0;
+}
+
+// ---- dashboard stats ----------------------------------------------------------
+
+export async function tenantStats(q, tenantId, { since, now, timeZone = "UTC" }) {
+  const totals = one(
+    await q.query(
+      `select
+         count(*) filter (where direction = 'outbound' and mode <> 'note' and status not in ('scheduled','cancelled'))::int as sent,
+         count(*) filter (where direction = 'outbound' and status in ('delivered','read'))::int as delivered,
+         count(*) filter (where direction = 'outbound' and status = 'read')::int as read,
+         count(*) filter (where direction = 'outbound' and status = 'failed')::int as failed,
+         count(*) filter (where direction = 'inbound')::int as received,
+         coalesce(sum(credits_held) filter (where not credits_refunded), 0)::int as credits_spent
+       from messages where tenant_id = $1 and created_at >= $2`,
+      [tenantId, since],
+    ),
+  );
+  const daily = (
+    await q.query(
+      `select to_char(created_at at time zone $3, 'YYYY-MM-DD') as day,
+              count(*) filter (where direction = 'outbound' and mode <> 'note')::int as sent,
+              count(*) filter (where direction = 'inbound')::int as received
+         from messages where tenant_id = $1 and created_at >= $2 group by 1 order by 1`,
+      [tenantId, since, timeZone],
+    )
+  ).rows;
+  const convs = one(await q.query("select count(*) filter (where status = 'open')::int as open, count(*) filter (where status = 'pending')::int as pending from conversations where tenant_id = $1", [tenantId]));
+  const contacts = one(await q.query("select count(*)::int as total, count(*) filter (where opted_out_at is not null)::int as opted_out from contacts where tenant_id = $1", [tenantId]));
+  const windows = one(await q.query("select count(*)::int as n from conversation_windows where tenant_id = $1 and expires_at > $2", [tenantId, now]));
+  return { totals, daily, conversations: convs, contacts, open_windows: windows.n };
+}

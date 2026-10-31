@@ -40,7 +40,9 @@ export function createClient(getToken, onUnauthorized) {
   async function request(method, path, body, { raw = false, headers = {} } = {}) {
     const res = await fetch(path, {
       method,
-      headers: { authorization: `Bearer ${getToken()}`, ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
+      // Cookie sessions need the X-Requested-With header on writes (CSRF check).
+      headers: { ...(getToken() ? { authorization: `Bearer ${getToken()}` } : { "x-requested-with": "fetch" }), ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
+      credentials: "same-origin",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (res.status === 401 && onUnauthorized) onUnauthorized();

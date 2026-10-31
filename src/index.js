@@ -11,7 +11,8 @@ import { createMediaService } from "./services/media.js";
 import { createMessagingService } from "./services/messaging.js";
 import { createNotifier } from "./services/notifier.js";
 import { createTemplateService } from "./services/templates.js";
-import { startWorkers } from "./worker.js";
+import { createUserService } from "./services/users.js";
+import { runMaintenance, startWorkers } from "./worker.js";
 
 const log = (entry) => console.log(JSON.stringify({ time: new Date().toISOString(), ...entry }));
 
@@ -26,6 +27,7 @@ export function buildServices(config, db, { meta = createMetaClient({ graphVersi
     inbound: createInboundService({ db, appSecret: config.metaAppSecret, notifier, log }),
     templates: createTemplateService(common),
     media: createMediaService(common),
+    users: createUserService({ db, signupCredits: config.signupCredits, allowSignup: config.allowSignup }),
   };
 }
 
@@ -43,7 +45,7 @@ async function main() {
   if (command !== "serve") throw new Error(`unknown command ${command}; use serve or migrate`);
 
   const services = buildServices(config, db);
-  const server = createServer(createApp(services, config, { log }));
+  const server = createServer(createApp(services, { ...config, runMaintenance: () => runMaintenance(services) }, { log }));
   server.requestTimeout = 30_000;
   server.headersTimeout = 15_000;
   const workers = config.runWorkers ? startWorkers({ db, messaging: services.messaging, log }) : { stop() {} };

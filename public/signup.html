@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Create account · WA Platform</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/auth.js"></script>
+</head>
+<body class="auth-body">
+  <div class="auth">
+    <aside class="auth-hero" aria-hidden="true">
+      <div class="logo light"><span class="logo-mark">W</span> WA Platform</div>
+      <div class="hero-copy">
+        <h1>Start talking to customers where they already are.</h1>
+        <p>Create a workspace in a minute. We connect your WhatsApp Business number, then you and your team can start replying.</p>
+      </div>
+      <ol class="hero-steps">
+        <li><b>Create your workspace</b><span>Your business name and login</span></li>
+        <li><b>Connect your number</b><span>We link your WhatsApp Business account</span></li>
+        <li><b>Add credits and send</b><span>Pay only for the messages you send</span></li>
+      </ol>
+    </aside>
+    <main class="auth-main">
+      <form class="auth-card" id="signup-form" novalidate>
+        <div class="logo mobile-only"><span class="logo-mark" aria-hidden="true">W</span> WA Platform</div>
+        <h2>Create your account</h2>
+        <p class="muted">Free to start. No card needed.</p>
+        <label>Business name <input name="business_name" autocomplete="organization" required maxlength="200" autofocus></label>
+        <label>Your name <input name="name" autocomplete="name" required maxlength="100"></label>
+        <label>Work email <input name="email" type="email" autocomplete="email" required></label>
+        <label>Password
+          <span class="pw"><input name="password" type="password" autocomplete="new-password" required minlength="10"><button type="button" class="pw-toggle" aria-label="Show password">Show</button></span>
+          <span class="hint">At least 10 characters. Avoid your name or email.</span>
+        </label>
+        <p class="error-text small" id="form-error" role="alert"></p>
+        <button class="btn primary block" type="submit">Create account</button>
+        <p class="center">Already have an account? <a href="/login">Sign in</a></p>
+      </form>
+    </main>
+  </div>
+</body>
+</html>

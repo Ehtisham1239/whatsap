@@ -98,6 +98,7 @@ export function createInboundService({ db, appSecret, now = () => new Date(), no
   return {
     /** Verifies and processes one webhook delivery. Throws 401 on a bad signature. */
     async handle(rawBody, signatureHeader) {
+      if (!appSecret) throw new AppError(503, "whatsapp_not_configured", "META_APP_SECRET is not configured");
       if (!verifyMetaSignature(rawBody, signatureHeader, appSecret)) throw new AppError(401, "invalid_signature", "Invalid webhook signature");
       let payload;
       try {
