@@ -290,10 +290,11 @@ const MESSAGE_COLUMNS = [
   "id", "tenant_id", "conversation_id", "contact_id", "waba_connection_id", "direction", "mode", "type", "content", "template_id",
   "status", "wamid", "error_code", "error_message", "credits_held", "credits_refunded", "conversation_category", "sent_via",
   "api_key_id", "idempotency_key", "scheduled_for", "sent_at", "delivered_at", "read_at", "failed_at", "created_at",
+  "broadcast_id", "queued_at",
 ];
 
 export async function insertMessage(q, m) {
-  const row = { id: newId(ID_PREFIXES.message), template_id: null, wamid: null, error_code: null, error_message: null, credits_held: 0, credits_refunded: false, conversation_category: null, api_key_id: null, idempotency_key: null, scheduled_for: null, sent_at: null, delivered_at: null, read_at: null, failed_at: null, ...m };
+  const row = { id: newId(ID_PREFIXES.message), broadcast_id: null, queued_at: m.status === "queued" ? m.created_at : null, template_id: null, wamid: null, error_code: null, error_message: null, credits_held: 0, credits_refunded: false, conversation_category: null, api_key_id: null, idempotency_key: null, scheduled_for: null, sent_at: null, delivered_at: null, read_at: null, failed_at: null, ...m };
   row.content = JSON.stringify(row.content ?? {});
   const placeholders = MESSAGE_COLUMNS.map((_, i) => `$${i + 1}`).join(",");
   return one(await q.query(`insert into messages (${MESSAGE_COLUMNS.join(",")}) values (${placeholders}) on conflict (wamid) do nothing returning *`, MESSAGE_COLUMNS.map((c) => row[c])));
@@ -337,7 +338,7 @@ export async function listMessages(q, tenantId, { limit = 50, before, contactId,
 export async function claimDueScheduled(q, now, limit = 50) {
   return (
     await q.query(
-      `update messages set status = 'queued' where id in (
+      `update messages set status = 'queued', queued_at = $1 where id in (
          select id from messages where status = 'scheduled' and scheduled_for <= $1 order by scheduled_for limit $2 for update skip locked
        ) returning *`,
       [now, limit],
@@ -346,7 +347,7 @@ export async function claimDueScheduled(q, now, limit = 50) {
 }
 
 export async function findStuckQueued(q, olderThan, limit = 100) {
-  return (await q.query("select * from messages where status = 'queued' and created_at < $1 and wamid is null order by created_at limit $2", [olderThan, limit])).rows;
+  return (await q.query("select * from messages where status = 'queued' and coalesce(queued_at, created_at) < $1 and wamid is null order by created_at limit $2", [olderThan, limit])).rows;
 }
 
 // ---- idempotency --------------------------------------------------------------
@@ -503,4 +504,48 @@ export async function tenantStats(q, tenantId, { since, now, timeZone = "UTC" })
   const contacts = one(await q.query("select count(*)::int as total, count(*) filter (where opted_out_at is not null)::int as opted_out from contacts where tenant_id = $1", [tenantId]));
   const windows = one(await q.query("select count(*)::int as n from conversation_windows where tenant_id = $1 and expires_at > $2", [tenantId, now]));
   return { totals, daily, conversations: convs, contacts, open_windows: windows.n };
+}
+
+// ---- broadcasts ---------------------------------------------------------------
+
+export async function insertBroadcast(q, b) {
+  return one(
+    await q.query(
+      `insert into broadcasts (id, tenant_id, name, waba_connection_id, template_id, template_name, language, status, total, skipped, credits, created_by, scheduled_for, created_at)
+       values ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13) returning *`,
+      [newId(ID_PREFIXES.broadcast), b.tenant_id, b.name, b.waba_connection_id, b.template_id, b.template_name, b.language, b.total, b.skipped, b.credits, b.created_by ?? null, b.scheduled_for, b.created_at],
+    ),
+  );
+}
+
+export async function setBroadcastCredits(q, id, credits) {
+  await q.query("update broadcasts set credits = $2 where id = $1", [id, credits]);
+}
+
+const BROADCAST_COUNTS = `
+  (select json_build_object(
+     'scheduled', count(*) filter (where m.status = 'scheduled'),
+     'queued', count(*) filter (where m.status = 'queued'),
+     'sent', count(*) filter (where m.status = 'sent'),
+     'delivered', count(*) filter (where m.status = 'delivered'),
+     'read', count(*) filter (where m.status = 'read'),
+     'failed', count(*) filter (where m.status = 'failed'),
+     'cancelled', count(*) filter (where m.status = 'cancelled'))
+   from messages m where m.broadcast_id = b.id) as counts`;
+
+export async function listBroadcasts(q, tenantId, { limit = 50 } = {}) {
+  return (await q.query(`select b.*, ${BROADCAST_COUNTS} from broadcasts b where b.tenant_id = $1 order by b.created_at desc limit $2`, [tenantId, limit])).rows;
+}
+
+export async function getBroadcast(q, tenantId, id) {
+  return one(await q.query(`select b.*, ${BROADCAST_COUNTS} from broadcasts b where b.tenant_id = $1 and b.id = $2`, [tenantId, id]));
+}
+
+/** Cancels the not-yet-sent messages of a broadcast; returns the cancelled rows (for refunds). */
+export async function cancelBroadcastMessages(q, broadcastId) {
+  return (await q.query("update messages set status = 'cancelled' where broadcast_id = $1 and status = 'scheduled' returning *", [broadcastId])).rows;
+}
+
+export async function setBroadcastStatus(q, id, status) {
+  await q.query("update broadcasts set status = $2 where id = $1", [id, status]);
 }

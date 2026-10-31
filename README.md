@@ -13,7 +13,7 @@ Tenants (your customers) get API keys and send WhatsApp messages from their own 
 | Page | Who |
 | --- | --- |
 | `/signup`, `/login` | Businesses create a workspace (trial tenant + owner account) and sign in with email and password. |
-| `/app` | The workspace: Dashboard (7-day stats, setup checklist), Inbox (shared conversations, replies, templates, notes, resolve/block, media), Contacts, Templates (sync), Wallet (ledger), Developers (API keys, webhooks; owners/admins), Team (add teammates, roles, remove access), Settings (password, numbers). |
+| `/app` | The workspace: Dashboard (7-day stats, setup checklist), Broadcasts (CSV upload, scheduling, delivery and read rates), Inbox (shared conversations, replies, templates, notes, resolve/block, media), Contacts, Templates (sync), Wallet (ledger), Developers (API keys, webhooks; owners/admins), Team (add teammates, roles, remove access), Settings (password, numbers). |
 | `/console` | Platform operator (ADMIN_TOKEN): tenants, credits, connecting WhatsApp numbers, keys, webhooks. |
 
 Sessions are HttpOnly, SameSite=Lax cookies (7 days, sliding); only a SHA-256 of the token is stored. Cookie-authenticated writes need `X-Requested-With: fetch` and a same-origin `Origin`, which blocks cross-site requests. Passwords use scrypt. Roles: **owner** (everything), **admin** (everything except owners), **agent** (inbox, contacts, templates, wallet). The pages are plain HTML, CSS and ES modules with no build step, served under a CSP that forbids inline script and style.
@@ -76,6 +76,7 @@ All responses are JSON. Errors look like `{"error": {"code": "outside_service_wi
 | `GET /v1/messages/:id` | One message. |
 | `POST /v1/messages/:id/cancel` | Cancel a scheduled message (credits refunded). |
 | `GET /v1/messages/:id/media` | Download the image/document/audio/video of an inbound message (proxied from Meta; `410` once Meta has expired it). |
+| `POST /v1/broadcasts` · `GET /v1/broadcasts[/:id]` · `POST /v1/broadcasts/:id/cancel` | Send one approved template to up to 5,000 recipients (`{ name, template: { name, language }, recipients: [{ to, variables }], schedule_at? }`). All rows are validated and the whole cost is held first; opted-out, blocked and duplicate numbers are skipped; cancelling refunds unsent messages. |
 | `GET /v1/templates?status=` · `POST /v1/templates/sync` | List or sync templates (`{ "waba_connection_id"? }`). |
 | `GET /v1/wallet?limit=&before=` | Balance and ledger. |
 | `GET /v1/contacts?limit=&after=` · `POST /v1/contacts/:phone/block` | Contacts; `{ "blocked": true, "reason"? }`. |
@@ -134,7 +135,7 @@ Run one instance with `RUN_WORKERS=true`. The scheduled-send claim uses `FOR UPD
 
 ## Status and known limits
 
-- **Verified locally:** 170+ unit, service and HTTP tests, plus `npm run test:smoke` (the real entrypoint against a local Postgres over the wire protocol and a fake Graph API). See CI.
+- **Verified locally:** 220+ unit, service and HTTP tests, plus `npm run test:smoke` (the real entrypoint against a local Postgres over the wire protocol and a fake Graph API). See CI.
 - **Not yet verified:** live sending through Meta, and running against the production database. That needs real credentials and a test number.
 - Tenant webhook deliveries are best effort (3 attempts in-process, no durable outbox).
 - Endpoint URLs are checked when registered; DNS that later resolves to a private address is not re-checked at delivery.

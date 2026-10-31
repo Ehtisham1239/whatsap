@@ -33,5 +33,5 @@ export default async function handler(req, res) {
   }
   await ready.handle(req, res);
   // Let tenant webhook deliveries finish after the response is sent.
-  waitUntil(ready.services.notifier.drain());
+  waitUntil(ready.services.broadcasts.drain().then(() => ready.services.notifier.drain()));
 }

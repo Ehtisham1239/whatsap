@@ -122,6 +122,26 @@ try {
   check(true, "dashboard stats count sent messages");
   await shot("06-dashboard");
 
+  // broadcast from pasted CSV, with an invalid row fixed before sending
+  await page.goto(`${base}/app#/broadcasts`);
+  await page.fill('#view-broadcasts input[name="name"]', "Launch offer");
+  await page.selectOption('#view-broadcasts select[name="template"]', { label: "hello (en, marketing)" });
+  await page.fill('#view-broadcasts textarea[name="csv"]', "phone,1\n+923005550001,Asad\n12345,Bad");
+  await page.waitForSelector("#view-broadcasts .error-text:has-text('Row 3')");
+  check(await page.isDisabled("#view-broadcasts button:has-text('Send broadcast')"), "broadcast form blocks invalid CSV rows");
+  await page.fill('#view-broadcasts textarea[name="csv"]', "phone,1\n+923005550001,Asad\n0300 5550002,Hina");
+  await page.click("#view-broadcasts button:has-text('Send broadcast')");
+  await page.waitForSelector(".toast:has-text('2 message(s)')");
+  let completed = false;
+  for (let i = 0; i < 10 && !completed; i++) {
+    await page.waitForTimeout(300);
+    await page.reload();
+    await page.waitForSelector("#view-broadcasts td:has-text('Launch offer')");
+    completed = await page.isVisible("#view-broadcasts .badge:has-text('completed')");
+  }
+  check(completed && stack.metaCalls.filter((c) => c.body.includes("Hina") || c.body.includes("Asad")).length === 2, "broadcast sent to every CSV recipient");
+  await shot("09-broadcasts");
+
   // change password, sign out, sign in again; agent sees restricted pages
   await page.goto(`${base}/app#/settings`);
   await page.fill('input[name="current_password"]', "tulip-orbit-cedar-42");

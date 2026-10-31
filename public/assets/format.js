@@ -109,3 +109,68 @@ export function filterConversations(list, query) {
   const digits = q.replace(/\D/g, "");
   return list.filter((c) => (c.contact_name || "").toLowerCase().includes(q) || (digits && c.phone.includes(digits)) || (c.last_preview || "").toLowerCase().includes(q));
 }
+
+/** RFC 4180-ish CSV parser: quoted fields, escaped quotes, CRLF, blank lines skipped. */
+export function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  const s = String(text ?? "").replace(/^﻿/, "");
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quoted) {
+      if (ch === '"' && s[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"' && field === "") quoted = true;
+    else if (ch === "," || ch === ";" || ch === "\t") {
+      row.push(field);
+      field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && s[i + 1] === "\n") i++;
+      row.push(field);
+      if (row.some((f) => f.trim() !== "")) rows.push(row);
+      row = [];
+      field = "";
+    } else field += ch;
+  }
+  row.push(field);
+  if (row.some((f) => f.trim() !== "")) rows.push(row);
+  return rows.map((r) => r.map((f) => f.trim()));
+}
+
+/**
+ * Turns CSV with a header row (phone, then one column per template variable)
+ * into broadcast recipients. Returns { recipients, errors, columns }.
+ */
+export function recipientsFromCsv(text, templateVariables = [], defaultCountryCode = "92") {
+  const rows = parseCsv(text);
+  if (!rows.length) return { recipients: [], errors: ["The list is empty"], columns: [] };
+  const header = rows[0].map((h) => h.replace(/^\{\{\s*|\s*\}\}$/g, "").toLowerCase());
+  const phoneCol = header.findIndex((h) => ["phone", "to", "number", "mobile", "whatsapp"].includes(h));
+  const errors = [];
+  if (phoneCol === -1) return { recipients: [], errors: ['The first row must be a header with a "phone" column'], columns: header };
+  const missing = templateVariables.filter((v) => !header.includes(String(v).toLowerCase()));
+  if (missing.length) errors.push(`Missing columns for template variables: ${missing.map((v) => `{{${v}}}`).join(", ")}`);
+  const recipients = [];
+  rows.slice(1).forEach((r, i) => {
+    const to = toInternational(r[phoneCol], defaultCountryCode);
+    if (!to) {
+      errors.push(`Row ${i + 2}: "${r[phoneCol] ?? ""}" is not a valid phone number`);
+      return;
+    }
+    const variables = {};
+    for (const v of templateVariables) {
+      const idx = header.indexOf(String(v).toLowerCase());
+      if (idx !== -1) variables[v] = r[idx] ?? "";
+    }
+    const empty = Object.entries(variables).filter(([, val]) => !val).map(([k]) => `{{${k}}}`);
+    if (empty.length) errors.push(`Row ${i + 2}: empty ${empty.join(", ")}`);
+    recipients.push({ to: `+${to}`, variables });
+  });
+  if (!recipients.length && !errors.length) errors.push("No recipients found below the header row");
+  return { recipients, errors, columns: header };
+}

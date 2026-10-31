@@ -1,13 +1,14 @@
 import { $, clear, createClient, h, toast } from "./dom.js";
 import {
   errorMessage, filterConversations, formatCredits, formatDateTime, formatListTime, formatPhone, hasDownloadableMedia,
-  messageText, statusLabel, templateFields, toInternational, windowState,
+  messageText, recipientsFromCsv, statusLabel, templateFields, toInternational, windowState,
 } from "./format.js";
 
 const POLL_MS = 5000;
 const ROUTES = {
   dashboard: "Dashboard",
   inbox: "Inbox",
+  broadcasts: "Broadcasts",
   contacts: "Contacts",
   templates: "Templates",
   wallet: "Wallet",
@@ -83,7 +84,7 @@ function route() {
     state.numbers = r.data;
     updateBanner();
   }, () => {});
-  const render = { dashboard: renderDashboard, inbox: refreshConversations, contacts: () => renderContacts(true), templates: renderTemplates, wallet: () => renderWallet(true), developers: renderDevelopers, team: renderTeam, settings: renderSettings }[view];
+  const render = { dashboard: renderDashboard, inbox: refreshConversations, broadcasts: renderBroadcasts, contacts: () => renderContacts(true), templates: renderTemplates, wallet: () => renderWallet(true), developers: renderDevelopers, team: renderTeam, settings: renderSettings }[view];
   Promise.resolve(render()).catch((err) => toast(errorMessage(err), "error"));
 }
 
@@ -897,4 +898,124 @@ async function renderSettings() {
       ),
     ),
   );
+}
+
+// ---------- broadcasts ----------
+async function renderBroadcasts() {
+  const page = clear($("#view-broadcasts"));
+  const [{ data }, templates] = await Promise.all([api.get("/v1/broadcasts"), loadTemplates(true)]);
+  const approved = templates.filter((x) => x.status === "approved");
+  const pctOf = (n, total) => (total ? `${Math.round((n / total) * 100)}%` : "0%");
+  const stateBadge = { scheduled: "grey", sending: "", completed: "", cancelled: "warn" };
+
+  page.append(
+    h("div", { class: "row" }, h("h2", {}, "Broadcasts"), h("span", { class: "spacer" }), h("span", { class: "small muted" }, "Send an approved template to many contacts at once.")),
+    card(
+      "Recent broadcasts",
+      table(
+        ["Name", "Template", "Status", "Recipients", "Delivered", "Read", "Failed", "Credits", ""],
+        data.map((b) => {
+          const delivered = b.counts.delivered + b.counts.read;
+          return h(
+            "tr",
+            {},
+            h("td", {}, h("b", {}, b.name), h("div", { class: "small muted" }, b.state === "scheduled" ? `Sends ${formatDateTime(b.scheduled_for)}` : formatDateTime(b.created_at))),
+            h("td", {}, `${b.template.name} (${b.template.language})`),
+            h("td", {}, h("span", { class: `badge ${stateBadge[b.state] ?? "grey"}` }, b.state)),
+            h("td", { class: "num" }, String(b.total), b.skipped ? h("div", { class: "small muted" }, `${b.skipped} skipped`) : null),
+            h("td", { class: "num" }, pctOf(delivered, b.total)),
+            h("td", { class: "num" }, pctOf(b.counts.read, b.total)),
+            h("td", { class: "num" }, String(b.counts.failed)),
+            h("td", { class: "num" }, String(b.credits)),
+            h(
+              "td",
+              {},
+              ["scheduled", "sending"].includes(b.state)
+                ? h(
+                    "button",
+                    {
+                      type: "button",
+                      class: "btn small danger",
+                      onclick: async () => {
+                        if (!confirm(`Cancel "${b.name}"? Messages not yet sent are cancelled and refunded.`)) return;
+                        try {
+                          await api.post(`/v1/broadcasts/${b.id}/cancel`, {});
+                          toast("Broadcast cancelled");
+                          renderBroadcasts();
+                          refreshBalance();
+                        } catch (err) {
+                          toast(errorMessage(err), "error");
+                        }
+                      },
+                    },
+                    "Cancel",
+                  )
+                : null,
+            ),
+          );
+        }),
+        "No broadcasts yet",
+      ),
+    ),
+  );
+
+  // new broadcast
+  const name = h("input", { name: "name", required: true, maxlength: 120, placeholder: "e.g. Eid offer" });
+  const select = h("select", { name: "template", required: true }, h("option", { value: "" }, approved.length ? "Choose a template" : "No approved templates. Sync them on the Templates page"), approved.map((x) => h("option", { value: x.id }, `${x.name} (${x.language}, ${x.category})`)));
+  const csv = h("textarea", { name: "csv", rows: 7, class: "mono", placeholder: "phone,1\n+923001234567,Ali", "aria-describedby": "csv-help" });
+  const file = h("input", { type: "file", accept: ".csv,text/csv,text/plain", "aria-label": "Upload CSV file" });
+  const when = h("input", { type: "datetime-local", name: "when", "aria-label": "Send later (optional)" });
+  const preview = h("div", { class: "small", role: "status" });
+  const submit = h("button", { class: "btn primary", type: "submit" }, "Send broadcast");
+  const current = () => approved.find((x) => x.id === select.value);
+  function refreshPreview() {
+    const t = current();
+    clear(preview);
+    if (!t) return;
+    const parsed = recipientsFromCsv(csv.value, templateFields(t));
+    preview.append(h("b", {}, `${parsed.recipients.length} recipient(s)`));
+    if (parsed.errors.length) preview.append(h("ul", { class: "error-text" }, parsed.errors.slice(0, 8).map((e) => h("li", {}, e)), parsed.errors.length > 8 ? h("li", {}, `…and ${parsed.errors.length - 8} more`) : null));
+    submit.disabled = !parsed.recipients.length || parsed.errors.length > 0;
+  }
+  select.addEventListener("change", () => {
+    const t = current();
+    if (t && !csv.value.trim()) csv.value = ["phone", ...templateFields(t)].join(",") + "\n";
+    refreshPreview();
+  });
+  csv.addEventListener("input", refreshPreview);
+  file.addEventListener("change", async () => {
+    const f = file.files?.[0];
+    if (!f) return;
+    if (f.size > 900_000) return toast("That file is too large (max about 5,000 rows)", "error");
+    csv.value = await f.text();
+    refreshPreview();
+  });
+  const form = h(
+    "form",
+    { class: "grid2" },
+    h("label", {}, h("span", {}, "Broadcast name"), name),
+    h("label", {}, h("span", {}, "Template"), select),
+    h("label", { class: "wide" }, h("span", {}, "Recipients (CSV with a header row)"), csv, h("span", { id: "csv-help", class: "hint" }, "First column: phone with country code. Then one column per template variable, named like {{1}} or {{first_name}}. Opted-out and blocked contacts are skipped automatically.")),
+    h("label", {}, h("span", {}, "…or upload a CSV file"), file),
+    h("label", {}, h("span", {}, "Send later (optional, your local time)"), when),
+    h("div", { class: "wide" }, preview),
+    h("div", { class: "row" }, submit),
+  );
+  submit.disabled = true;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const t = current();
+    if (!t) return;
+    const parsed = recipientsFromCsv(csv.value, templateFields(t));
+    const body = { name: name.value.trim(), template: { name: t.name, language: t.language }, recipients: parsed.recipients };
+    if (when.value) body.schedule_at = new Date(when.value).toISOString();
+    const r = await submitting(form, () => api.post("/v1/broadcasts", body));
+    if (r) {
+      const b = r.broadcast;
+      toast(`${b.total} message(s) ${b.state === "scheduled" ? "scheduled" : "sending"} · ${b.credits} credits${b.skipped ? ` · ${b.skipped} skipped` : ""}`);
+      renderBroadcasts();
+      refreshBalance();
+    }
+  });
+  page.append(card("New broadcast", form));
 }

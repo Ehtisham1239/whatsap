@@ -140,7 +140,7 @@ function bearer(req) {
  * services: { db, accounts, messaging, inbound, templates }
  * config:   { adminToken, metaVerifyToken, trustProxy, rateLimit }
  */
-export function createApp({ db, accounts, messaging, inbound, templates, media, users }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
+export function createApp({ db, accounts, messaging, inbound, templates, media, users, broadcasts }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
   const router = createRouter();
   const apiLimiter = createRateLimiter(config.rateLimit ?? { capacity: 50, refillPerSecond: 20 });
   const adminLimiter = createRateLimiter(config.adminRateLimit ?? { capacity: 20, refillPerSecond: 2 });
@@ -292,6 +292,11 @@ export function createApp({ db, accounts, messaging, inbound, templates, media, 
     }),
   );
   router.post("/v1/messages/:id/cancel", api(async ({ auth, params }) => ({ status: 200, body: { message: await messaging.cancel(auth, params.id) } })));
+
+  router.get("/v1/broadcasts", api(async ({ auth }) => ({ status: 200, body: { data: await broadcasts.list(auth) } })));
+  router.post("/v1/broadcasts", api(async ({ auth, body }) => ({ status: 201, body: { broadcast: await broadcasts.create(auth, body) } })));
+  router.get("/v1/broadcasts/:id", api(async ({ auth, params }) => ({ status: 200, body: { broadcast: await broadcasts.get(auth, params.id) } })));
+  router.post("/v1/broadcasts/:id/cancel", api(async ({ auth, params }) => ({ status: 200, body: { broadcast: await broadcasts.cancel(auth, params.id) } })));
 
   router.get("/v1/numbers", api(async ({ auth }) => ({ status: 200, body: { data: (await accounts.listNumbers(auth.tenant_id)).filter((n) => !auth.waba_connection_id || n.id === auth.waba_connection_id) } })));
 

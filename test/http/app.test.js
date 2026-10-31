@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
 import { createApp } from "../../src/http/app.js";
+import { createBroadcastService } from "../../src/services/broadcasts.js";
 import { createAccountService } from "../../src/services/accounts.js";
 import { createInboundService } from "../../src/services/inbound.js";
 import { createMediaService } from "../../src/services/media.js";
@@ -21,10 +22,12 @@ before(async () => {
   clock = makeClock();
   logs = [];
   const common = { db: t.db, meta, encryptionKey: ENCRYPTION_KEY, now: clock };
+  const messagingSvc = createMessagingService({ ...common, sleep: async () => {} });
   const services = {
     db: t.db,
+    broadcasts: createBroadcastService({ db: t.db, messaging: messagingSvc, now: clock }),
     accounts: createAccountService({ ...common, apiKeyPepper: PEPPER }),
-    messaging: createMessagingService({ ...common, sleep: async () => {} }),
+    messaging: messagingSvc,
     inbound: createInboundService({ db: t.db, appSecret: APP_SECRET, now: clock }),
     templates: createTemplateService(common),
     media: createMediaService(common),
@@ -370,4 +373,19 @@ test("cron endpoint requires the secret and runs maintenance", async () => {
   assert.deepEqual(await ok.json(), { scheduled: 0, stuck: 0, purged: 0 });
   assert.equal(runs, 1);
   assert.equal(disabled, 401, "no secret configured means the endpoint is closed");
+});
+
+test("broadcast endpoints", async () => {
+  const { tenant, key } = await onboard({ credits: 100 });
+  meta.templates = [{ id: "1", name: "promo", language: "en", status: "APPROVED", category: "MARKETING", components: [{ type: "BODY", text: "Hi {{1}}" }] }];
+  await adminCall("POST", `/admin/tenants/${tenant.id}/templates/sync`, { waba_connection_id: (await adminCall("GET", `/admin/tenants/${tenant.id}/numbers`)).json.data[0].id });
+  const created = await call("POST", "/v1/broadcasts", { token: key, body: { name: "Promo", template: { name: "promo", language: "en" }, recipients: [{ to: "+923001111111", variables: { 1: "A" } }, { to: "+923002222222", variables: { 1: "B" } }], schedule_at: new Date(clock().getTime() + 3600_000).toISOString() } });
+  assert.equal(created.status, 201);
+  assert.equal(created.json.broadcast.state, "scheduled");
+  assert.equal(created.json.broadcast.credits, 20);
+  assert.equal((await call("GET", "/v1/broadcasts", { token: key })).json.data.length, 1);
+  const id = created.json.broadcast.id;
+  assert.equal((await call("GET", `/v1/broadcasts/${id}`, { token: key })).json.broadcast.total, 2);
+  assert.equal((await call("POST", `/v1/broadcasts/${id}/cancel`, { token: key })).json.broadcast.state, "cancelled");
+  assert.equal((await call("POST", "/v1/broadcasts", { token: key, body: { name: "" } })).status, 400);
 });

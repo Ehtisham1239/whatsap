@@ -227,3 +227,4 @@ pre.code { background: var(--panel-2); border: 1px solid var(--line); border-rad
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .card h3 { margin: 0 0 10px; font-size: 15px; }
 .card > * + * { margin-top: 10px; }
+.grid2 > .wide { grid-column: 1 / -1; }

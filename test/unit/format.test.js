@@ -87,3 +87,29 @@ test("filterConversations by name, digits and preview", () => {
   assert.equal(filterConversations(list, "SHIPPED").length, 1);
   assert.equal(filterConversations(list, "zzz").length, 0);
 });
+
+test("parseCsv handles quotes, separators, CRLF and blank lines", async () => {
+  const { parseCsv } = await import("../../public/assets/format.js");
+  assert.deepEqual(parseCsv('phone,name\r\n"+92 300 1111111","Khan, Ali"\n\n923002222222;"Sara ""S"""\n'), [
+    ["phone", "name"],
+    ["+92 300 1111111", "Khan, Ali"],
+    ["923002222222", 'Sara "S"'],
+  ]);
+  assert.deepEqual(parseCsv("﻿a\tb"), [["a", "b"]]);
+  assert.deepEqual(parseCsv(""), []);
+});
+
+test("recipientsFromCsv maps columns to template variables and reports problems", async () => {
+  const { recipientsFromCsv } = await import("../../public/assets/format.js");
+  const ok = recipientsFromCsv("Phone,{{1}},2\n0300 1111111,Ali,A-1\n+44 7700 900123,Sara,B-2", ["1", "2"]);
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.recipients, [
+    { to: "+923001111111", variables: { 1: "Ali", 2: "A-1" } },
+    { to: "+447700900123", variables: { 1: "Sara", 2: "B-2" } },
+  ]);
+  const bad = recipientsFromCsv("phone,first_name\n12,Ali\n923001111111,", ["first_name", "order"]);
+  assert.deepEqual(bad.errors, ["Missing columns for template variables: {{order}}", 'Row 2: "12" is not a valid phone number', "Row 3: empty {{first_name}}"]);
+  assert.match(recipientsFromCsv("name\nAli", []).errors[0], /phone/);
+  assert.deepEqual(recipientsFromCsv("", []).errors, ["The list is empty"]);
+  assert.deepEqual(recipientsFromCsv("phone", []).errors, ["No recipients found below the header row"]);
+});

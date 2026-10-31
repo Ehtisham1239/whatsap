@@ -6,6 +6,7 @@ import { migrate } from "./db/migrate.js";
 import { createApp } from "./http/app.js";
 import { createMetaClient } from "./meta/client.js";
 import { createAccountService } from "./services/accounts.js";
+import { createBroadcastService } from "./services/broadcasts.js";
 import { createInboundService } from "./services/inbound.js";
 import { createMediaService } from "./services/media.js";
 import { createMessagingService } from "./services/messaging.js";
@@ -19,11 +20,13 @@ const log = (entry) => console.log(JSON.stringify({ time: new Date().toISOString
 export function buildServices(config, db, { meta = createMetaClient({ graphVersion: config.graphVersion, baseUrl: config.metaBaseUrl }), fetch = globalThis.fetch } = {}) {
   const notifier = createNotifier({ db, fetch, log });
   const common = { db, meta, encryptionKey: config.encryptionKey };
+  const messaging = createMessagingService({ ...common, prices: config.prices, notifier, defaultCountryCode: config.defaultCountryCode, log });
   return {
     db,
     notifier,
     accounts: createAccountService({ ...common, apiKeyPepper: config.apiKeyPepper }),
-    messaging: createMessagingService({ ...common, prices: config.prices, notifier, defaultCountryCode: config.defaultCountryCode, log }),
+    messaging,
+    broadcasts: createBroadcastService({ db, messaging, prices: config.prices, defaultCountryCode: config.defaultCountryCode, log }),
     inbound: createInboundService({ db, appSecret: config.metaAppSecret, notifier, log }),
     templates: createTemplateService(common),
     media: createMediaService(common),
@@ -58,6 +61,7 @@ async function main() {
     log({ level: "info", msg: "shutting down", signal });
     workers.stop();
     server.close();
+    await services.broadcasts.drain();
     await services.notifier.drain();
     await db.close();
     process.exit(0);
