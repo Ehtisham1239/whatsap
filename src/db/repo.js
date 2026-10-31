@@ -220,8 +220,30 @@ export async function listConversations(q, tenantId, { status, limit = 50 } = {}
   const filter = status ? (params.push(status), "and c.status = $3") : "";
   return (
     await q.query(
-      `select c.*, ct.phone, ct.name as contact_name from conversations c join contacts ct on ct.id = c.contact_id
+      `select c.*, ct.phone, ct.name as contact_name, ct.opted_out_at, ct.blocked_at, w.expires_at as window_expires_at,
+              (select coalesce(m.content->>'body', m.content->>'caption', m.type) from messages m where m.conversation_id = c.id order by m.created_at desc, m.id desc limit 1) as last_preview
+         from conversations c
+         join contacts ct on ct.id = c.contact_id
+         left join conversation_windows w on w.contact_id = c.contact_id and w.waba_connection_id = c.waba_connection_id
         where c.tenant_id = $1 ${filter} order by c.last_message_at desc limit $2`,
+      params,
+    )
+  ).rows;
+}
+
+export async function getConversation(q, tenantId, id) {
+  return one(await q.query("select * from conversations where tenant_id = $1 and id = $2", [tenantId, id]));
+}
+
+export async function listTenants(q, { limit = 100, after } = {}) {
+  const params = [limit];
+  const cursor = after ? (params.push(after), "where t.id > $2") : "";
+  return (
+    await q.query(
+      `select t.*, coalesce(w.balance, 0) as balance,
+              (select count(*)::int from waba_connections c where c.tenant_id = t.id) as numbers,
+              (select count(*)::int from messages m where m.tenant_id = t.id and m.direction = 'outbound') as messages_sent
+         from tenants t left join wallets w on w.tenant_id = t.id ${cursor} order by t.id limit $1`,
       params,
     )
   ).rows;

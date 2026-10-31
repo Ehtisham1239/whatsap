@@ -289,3 +289,63 @@ test("inbound media downloads as an attachment with a safe file name", async () 
   assert.equal(res.headers.get("x-content-type-options"), "nosniff");
   assert.equal(Buffer.from(await res.arrayBuffer()).toString(), "JPEGDATA");
 });
+
+describe("dashboard pages", () => {
+  test("pages are served with a strict CSP; assets with their types", async () => {
+    for (const path of ["/", "/console"]) {
+      const res = await fetch(base + path);
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get("content-type"), /text\/html/);
+      const csp = res.headers.get("content-security-policy");
+      assert.match(csp, /script-src 'self'/);
+      assert.ok(!csp.includes("unsafe-inline"));
+      assert.match(csp, /frame-ancestors 'none'/);
+      const html = await res.text();
+      assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), "no inline scripts");
+      assert.ok(!/\sstyle=/i.test(html), "no inline styles");
+    }
+    const js = await fetch(`${base}/assets/inbox.js`);
+    assert.equal(js.status, 200);
+    assert.match(js.headers.get("content-type"), /text\/javascript/);
+    assert.match((await fetch(`${base}/assets/app.css`)).headers.get("content-type"), /text\/css/);
+  });
+
+  test("path traversal and unknown assets are 404", async () => {
+    for (const p of ["/assets/..%2Fpackage.json", "/assets/../src/config.js", "/assets/%2e%2e%2fconsole.html", "/assets/missing.js", "/assets/inbox.JS", "/assets/x.json"]) {
+      const res = await fetch(base + p);
+      assert.equal(res.status, 404, p);
+    }
+  });
+});
+
+describe("dashboard API additions", () => {
+  test("admin lists tenants with balance and counts", async () => {
+    const { tenant } = await onboard({ credits: 25 });
+    const r = await adminCall("GET", "/admin/tenants");
+    const row = r.json.data.find((x) => x.id === tenant.id);
+    assert.equal(row.balance, 25);
+    assert.equal(row.numbers, 1);
+    assert.equal(row.messages_sent, 0);
+    assert.equal((await call("GET", "/admin/tenants")).status, 401);
+  });
+
+  test("conversations include window, preview and contact flags; notes are internal and free", async () => {
+    const { key } = await onboard({ credits: 0 });
+    const p = signed({ object: "whatsapp_business_account", entry: [{ id: "100200300", changes: [{ field: "messages", value: { metadata: { phone_number_id: "400500600" }, messages: [{ from: "923001234567", id: "wamid.N1", timestamp: String(Math.floor(clock().getTime() / 1000)), type: "text", text: { body: "Where is my order?" } }] } }] }] });
+    await call("POST", "/webhooks/meta", p);
+    const [conv] = (await call("GET", "/v1/conversations", { token: key })).json.data;
+    assert.equal(conv.last_preview, "Where is my order?");
+    assert.equal(conv.window_expires_at, new Date(clock().getTime() + 24 * 3600_000).toISOString());
+    assert.equal(conv.opted_out, false);
+    const sendsBefore = meta.sends.length;
+    clock.advance(1000);
+    const note = await call("POST", `/v1/conversations/${conv.id}/notes`, { token: key, body: { text: "Customer is VIP" } });
+    assert.equal(note.status, 201);
+    assert.equal(note.json.message.mode, "note");
+    assert.equal(note.json.message.credits, 0);
+    assert.equal(meta.sends.length, sendsBefore, "notes are never sent to WhatsApp");
+    assert.equal((await call("GET", "/v1/conversations", { token: key })).json.data[0].last_preview, "Customer is VIP");
+    assert.equal((await call("POST", `/v1/conversations/${conv.id}/notes`, { token: key, body: { text: " " } })).status, 400);
+    assert.equal((await call("POST", "/v1/conversations/conv_missing/notes", { token: key, body: { text: "x" } })).status, 404);
+  });
+});

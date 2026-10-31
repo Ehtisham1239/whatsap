@@ -217,6 +217,33 @@ export function createMessagingService({
 
     dispatch,
 
+    /** Adds an internal note to a conversation. Notes are never sent to WhatsApp and cost nothing. */
+    async addNote(auth, conversationId, text) {
+      if (typeof text !== "string" || !text.trim() || text.length > 4096) throw badRequest("text is required (max 4096 characters)");
+      const at = now();
+      const m = await db.tx(async (q) => {
+        const conv = await repo.getConversation(q, auth.tenant_id, conversationId);
+        if (!conv || (auth.waba_connection_id && conv.waba_connection_id !== auth.waba_connection_id)) throw notFound("Conversation not found");
+        const row = await repo.insertMessage(q, {
+          tenant_id: auth.tenant_id,
+          conversation_id: conv.id,
+          contact_id: conv.contact_id,
+          waba_connection_id: conv.waba_connection_id,
+          direction: "outbound",
+          mode: "note",
+          type: "text",
+          content: { body: text.trim() },
+          status: "sent",
+          sent_via: "dashboard",
+          api_key_id: auth.id ?? null,
+          created_at: at,
+        });
+        await repo.touchConversation(q, conv.id, at);
+        return row;
+      });
+      return presentMessage(m);
+    },
+
     async get(auth, id) {
       const m = await repo.getMessage(db, auth.tenant_id, id);
       if (!m) throw notFound("Message not found");

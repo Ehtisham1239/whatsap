@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { extname, join, normalize, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as repo from "../db/repo.js";
 import { safeEqual } from "../lib/crypto.js";
 import { AppError, badRequest, notFound, unauthorized } from "../lib/errors.js";
@@ -9,6 +12,32 @@ import { createRateLimiter } from "./rate-limit.js";
 import { createRouter } from "./router.js";
 
 export const MAX_BODY_BYTES = 1024 * 1024;
+export const PUBLIC_DIR = fileURLToPath(new URL("../../public", import.meta.url));
+
+const STATIC_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+};
+
+// The dashboard pages load only same-origin scripts and styles and never inline code.
+const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
+/** Reads a file under PUBLIC_DIR; null for anything outside it or with an unknown type. */
+export async function readStatic(relPath, dir = PUBLIC_DIR) {
+  const type = STATIC_TYPES[extname(relPath).toLowerCase()];
+  if (!type || relPath.includes("\0")) return null;
+  const full = normalize(join(dir, relPath));
+  if (!full.startsWith(dir + sep)) return null;
+  try {
+    return { body: await readFile(full), type };
+  } catch {
+    return null;
+  }
+}
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -100,6 +129,21 @@ export function createApp({ db, accounts, messaging, inbound, templates, media }
     if (!config.adminToken || !safeEqual(bearer(ctx.req) ?? "", config.adminToken)) throw unauthorized("Missing or invalid admin token");
     return handler(ctx);
   };
+
+  // ---- dashboard (static) ----
+  const page = (file) => async () => {
+    const f = await readStatic(file, config.publicDir ?? PUBLIC_DIR);
+    if (!f) throw notFound("Page not found");
+    return { status: 200, binary: f.body, headers: { "content-type": f.type, "content-security-policy": PAGE_CSP } };
+  };
+  router.get("/", page("index.html"));
+  router.get("/console", page("console.html"));
+  router.get("/assets/:file", async ({ params }) => {
+    if (!/^[a-z0-9-]+\.(css|js|svg|png|ico)$/.test(params.file)) throw notFound("Asset not found");
+    const f = await readStatic(join("assets", params.file), config.publicDir ?? PUBLIC_DIR);
+    if (!f) throw notFound("Asset not found");
+    return { status: 200, binary: f.body, headers: { "content-type": f.type, "cache-control": "no-cache" } };
+  });
 
   // ---- health ----
   router.get("/health", () => ({ status: 200, body: { status: "ok" } }));
@@ -221,7 +265,24 @@ export function createApp({ db, accounts, messaging, inbound, templates, media }
       if (status && !["open", "pending", "resolved"].includes(status)) throw badRequest("status must be open, pending or resolved");
       const limit = intParam(url.searchParams.get("limit"), { def: 50, min: 1, max: 200, name: "limit" });
       const rows = await repo.listConversations(db, auth.tenant_id, { status, limit });
-      return { status: 200, body: { data: rows.map((c) => ({ id: c.id, contact_id: c.contact_id, phone: c.phone, contact_name: c.contact_name, waba_connection_id: c.waba_connection_id, status: c.status, last_message_at: new Date(c.last_message_at).toISOString() })) } };
+      return {
+        status: 200,
+        body: {
+          data: rows.map((c) => ({
+            id: c.id,
+            contact_id: c.contact_id,
+            phone: c.phone,
+            contact_name: c.contact_name,
+            waba_connection_id: c.waba_connection_id,
+            status: c.status,
+            last_message_at: new Date(c.last_message_at).toISOString(),
+            last_preview: c.last_preview ? String(c.last_preview).slice(0, 140) : null,
+            window_expires_at: c.window_expires_at ? new Date(c.window_expires_at).toISOString() : null,
+            opted_out: Boolean(c.opted_out_at),
+            blocked: Boolean(c.blocked_at),
+          })),
+        },
+      };
     }),
   );
   router.post(
@@ -240,7 +301,20 @@ export function createApp({ db, accounts, messaging, inbound, templates, media }
     }),
   );
 
+  router.post(
+    "/v1/conversations/:id/notes",
+    api(async ({ auth, params, body }) => ({ status: 201, body: { message: await messaging.addNote(auth, params.id, body.text) } })),
+  );
+
   // ---- operator admin API ----
+  router.get(
+    "/admin/tenants",
+    admin(async ({ url }) => {
+      const limit = intParam(url.searchParams.get("limit"), { def: 100, min: 1, max: 500, name: "limit" });
+      const rows = await repo.listTenants(db, { limit, after: url.searchParams.get("after") || undefined });
+      return { status: 200, body: { data: rows, next_after: rows.length === limit ? rows.at(-1).id : null } };
+    }),
+  );
   router.post("/admin/tenants", admin(async ({ body }) => ({ status: 201, body: { tenant: await accounts.createTenant(body) } })));
   router.get("/admin/tenants/:id", admin(async ({ params }) => ({ status: 200, body: { tenant: await accounts.getTenant(params.id) } })));
   router.patch("/admin/tenants/:id", admin(async ({ params, body }) => ({ status: 200, body: { tenant: await accounts.setTenantStatus(params.id, body.status) } })));
