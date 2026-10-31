@@ -73,3 +73,33 @@ test("buildOutboundPayload for each type", () => {
   assert.throws(() => buildOutboundPayload({ to: "1", type: "template" }), TypeError);
   assert.throws(() => buildOutboundPayload({ to: "1", type: "poll" }), TypeError);
 });
+
+test("isMetaMediaUrl only allows Meta https hosts", async () => {
+  const { isMetaMediaUrl } = await import("../../src/meta/client.js");
+  assert.ok(isMetaMediaUrl("https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1"));
+  assert.ok(isMetaMediaUrl("https://scontent.xx.fbcdn.net/a.jpg"));
+  for (const u of ["http://lookaside.fbsbx.com/x", "https://fbsbx.com.evil.example/x", "https://evil.example/fbcdn.net", "not a url", undefined]) assert.ok(!isMetaMediaUrl(u), String(u));
+});
+
+test("downloadMedia never sends the token to a non-Meta host and enforces size", async () => {
+  const fetch = fakeFetch([]);
+  const client = createMetaClient({ fetch });
+  await assert.rejects(client.downloadMedia({ url: "https://evil.example/x", token: "t" }), (e) => e.code === "invalid_media_url");
+  assert.equal(fetch.calls.length, 0);
+  const ok = async () => ({ ok: true, status: 200, headers: new Headers({ "content-type": "image/png" }), arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer });
+  const c2 = createMetaClient({ fetch: ok });
+  const file = await c2.downloadMedia({ url: "https://lookaside.fbsbx.com/x", token: "t" });
+  assert.deepEqual([...file.body], [1, 2, 3]);
+  assert.equal(file.contentType, "image/png");
+  await assert.rejects(c2.downloadMedia({ url: "https://lookaside.fbsbx.com/x", token: "t", maxBytes: 2 }), (e) => e.code === "media_too_large");
+  const notFound = createMetaClient({ fetch: async () => ({ ok: false, status: 404 }) });
+  await assert.rejects(notFound.downloadMedia({ url: "https://lookaside.fbsbx.com/x", token: "t" }), (e) => e.status === 404 && !e.retryable);
+});
+
+test("getMediaInfo validates the id", async () => {
+  const fetch = fakeFetch([{ status: 200, json: { url: "https://lookaside.fbsbx.com/x", mime_type: "image/jpeg" } }]);
+  const client = createMetaClient({ fetch });
+  await assert.rejects(client.getMediaInfo({ mediaId: "../x", token: "t" }), TypeError);
+  assert.equal((await client.getMediaInfo({ mediaId: "123", token: "t" })).mime_type, "image/jpeg");
+  assert.match(fetch.calls[0].url, /\/123$/);
+});

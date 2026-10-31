@@ -74,7 +74,7 @@ function bearer(req) {
  * services: { db, accounts, messaging, inbound, templates }
  * config:   { adminToken, metaVerifyToken, trustProxy, rateLimit }
  */
-export function createApp({ db, accounts, messaging, inbound, templates }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
+export function createApp({ db, accounts, messaging, inbound, templates, media }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
   const router = createRouter();
   const apiLimiter = createRateLimiter(config.rateLimit ?? { capacity: 50, refillPerSecond: 20 });
   const adminLimiter = createRateLimiter(config.adminRateLimit ?? { capacity: 20, refillPerSecond: 2 });
@@ -145,6 +145,21 @@ export function createApp({ db, accounts, messaging, inbound, templates }, confi
     }),
   );
   router.get("/v1/messages/:id", api(async ({ auth, params }) => ({ status: 200, body: { message: await messaging.get(auth, params.id) } })));
+  router.get(
+    "/v1/messages/:id/media",
+    api(async ({ auth, params }) => {
+      const file = await media.download(auth, params.id);
+      const safeName = file.filename ? file.filename.replace(/[^\w.-]+/g, "_").slice(0, 100) : null;
+      return {
+        status: 200,
+        binary: file.body,
+        headers: {
+          "content-type": file.contentType,
+          "content-disposition": `attachment${safeName ? `; filename="${safeName}"` : ""}`,
+        },
+      };
+    }),
+  );
   router.post("/v1/messages/:id/cancel", api(async ({ auth, params }) => ({ status: 200, body: { message: await messaging.cancel(auth, params.id) } })));
 
   router.get("/v1/numbers", api(async ({ auth }) => ({ status: 200, body: { data: (await accounts.listNumbers(auth.tenant_id)).filter((n) => !auth.waba_connection_id || n.id === auth.waba_connection_id) } })));
@@ -278,7 +293,10 @@ export function createApp({ db, accounts, messaging, inbound, templates }, confi
       }
       const out = await match.handler({ req, url, params: match.params, raw, body });
       status = out.status;
-      send(res, out.status, out.text ?? out.body, { "x-request-id": requestId, ...(out.headers ?? {}) });
+      if (out.binary) {
+        res.writeHead(out.status, { ...SECURITY_HEADERS, "content-length": out.binary.length, "x-request-id": requestId, ...out.headers });
+        res.end(out.binary);
+      } else send(res, out.status, out.text ?? out.body, { "x-request-id": requestId, ...(out.headers ?? {}) });
     } catch (err) {
       if (err instanceof AppError) {
         status = err.status;

@@ -74,12 +74,46 @@ export function createMetaClient({ fetch = globalThis.fetch, graphVersion = DEFA
       return out;
     },
 
+    /** Resolves an inbound media id to a short-lived download URL. */
+    async getMediaInfo({ mediaId, token }) {
+      if (!/^\d+$/.test(String(mediaId))) throw new TypeError("mediaId must be numeric");
+      return call("GET", String(mediaId), token);
+    },
+
+    /**
+     * Downloads media from the URL returned by getMediaInfo. The bearer token is
+     * only ever sent to Meta's media hosts.
+     */
+    async downloadMedia({ url, token, maxBytes = 100 * 1024 * 1024 }) {
+      if (!isMetaMediaUrl(url)) throw new MetaApiError({ status: 0, code: "invalid_media_url", message: "Media URL is not a Meta host", retryable: false });
+      let res;
+      try {
+        res = await fetch(url, { headers: { authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(timeoutMs * 4) });
+      } catch (err) {
+        throw new MetaApiError({ status: 0, code: "network_error", message: `Media download failed: ${err?.message || "network error"}`, retryable: true });
+      }
+      if (!res.ok) throw new MetaApiError({ status: res.status, code: String(res.status), message: `Media download HTTP ${res.status}`, retryable: res.status >= 500 });
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) throw new MetaApiError({ status: 413, code: "media_too_large", message: "Media exceeds the size limit", retryable: false });
+      return { body: buf, contentType: res.headers.get("content-type") || "application/octet-stream" };
+    },
+
     /** Reads phone number details (display number, quality rating, messaging tier). */
     async getPhoneNumber({ phoneNumberId, token }) {
       if (!/^\d+$/.test(String(phoneNumberId))) throw new TypeError("phoneNumberId must be numeric");
       return call("GET", `${phoneNumberId}?fields=display_phone_number,verified_name,quality_rating,messaging_limit_tier`, token);
     },
   };
+}
+
+export function isMetaMediaUrl(value) {
+  try {
+    const u = new URL(value);
+    const host = u.hostname.toLowerCase();
+    return u.protocol === "https:" && (host === "lookaside.fbsbx.com" || host.endsWith(".fbsbx.com") || host.endsWith(".fbcdn.net") || host === "graph.facebook.com");
+  } catch {
+    return false;
+  }
 }
 
 /** Builds the Cloud API payload (minus messaging_product) for a validated send request. */

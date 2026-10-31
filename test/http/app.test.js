@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { createApp } from "../../src/http/app.js";
 import { createAccountService } from "../../src/services/accounts.js";
 import { createInboundService } from "../../src/services/inbound.js";
+import { createMediaService } from "../../src/services/media.js";
 import { createMessagingService } from "../../src/services/messaging.js";
 import { createTemplateService } from "../../src/services/templates.js";
 import { createTestDb } from "../helpers/db.js";
@@ -26,6 +27,7 @@ before(async () => {
     messaging: createMessagingService({ ...common, sleep: async () => {} }),
     inbound: createInboundService({ db: t.db, appSecret: APP_SECRET, now: clock }),
     templates: createTemplateService(common),
+    media: createMediaService(common),
   };
   server = createServer(createApp(services, { adminToken: ADMIN, metaVerifyToken: VERIFY, rateLimit: { capacity: 1000, refillPerSecond: 1000 }, adminRateLimit: { capacity: 1000, refillPerSecond: 1000 } }, { log: (l) => logs.push(l), now: clock }));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -273,4 +275,17 @@ test("a key bound to one number only sees and syncs that number", async () => {
   const key = (await adminCall("POST", `/admin/tenants/${tenant.id}/api-keys`, { name: "bound", waba_connection_id: number.id })).json.api_key.key;
   assert.deepEqual((await call("GET", "/v1/numbers", { token: key })).json.data.map((n) => n.id), [number.id]);
   assert.equal((await call("POST", "/v1/templates/sync", { token: key, body: { waba_connection_id: other.id } })).status, 403);
+});
+
+test("inbound media downloads as an attachment with a safe file name", async () => {
+  const { key } = await onboard({ credits: 0 });
+  const p = signed({ object: "whatsapp_business_account", entry: [{ id: "100200300", changes: [{ field: "messages", value: { metadata: { phone_number_id: "400500600" }, messages: [{ from: "923001234567", id: "wamid.DOC", timestamp: "1761904800", type: "document", document: { id: "555", mime_type: "application/pdf", filename: "../in voice.pdf" } }] } }] }] });
+  await call("POST", "/webhooks/meta", p);
+  const [msg] = (await call("GET", "/v1/messages", { token: key })).json.data;
+  const res = await fetch(`${base}/v1/messages/${msg.id}/media`, { headers: { authorization: `Bearer ${key}` } });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "application/pdf");
+  assert.equal(res.headers.get("content-disposition"), 'attachment; filename=".._in_voice.pdf"');
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(Buffer.from(await res.arrayBuffer()).toString(), "JPEGDATA");
 });

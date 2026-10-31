@@ -50,6 +50,7 @@ All responses are JSON. Errors look like `{"error": {"code": "outside_service_wi
 | `GET /v1/messages?limit=&before=&status=&contact_id=&conversation_id=` | List, newest first. Page with `next_cursor` → `before`. |
 | `GET /v1/messages/:id` | One message. |
 | `POST /v1/messages/:id/cancel` | Cancel a scheduled message (credits refunded). |
+| `GET /v1/messages/:id/media` | Download the image/document/audio/video of an inbound message (proxied from Meta; `410` once Meta has expired it). |
 | `GET /v1/templates?status=` · `POST /v1/templates/sync` | List or sync templates (`{ "waba_connection_id"? }`). |
 | `GET /v1/wallet?limit=&before=` | Balance and ledger. |
 | `GET /v1/contacts?limit=&after=` · `POST /v1/contacts/:phone/block` | Contacts; `{ "blocked": true, "reason"? }`. |
@@ -108,9 +109,9 @@ Run one instance with `RUN_WORKERS=true`. The scheduled-send claim uses `FOR UPD
 
 ## Status and known limits
 
-- **Verified locally:** 160+ unit, service and HTTP tests, plus `npm run test:smoke` (the real entrypoint against a local Postgres over the wire protocol and a fake Graph API). See CI.
+- **Verified locally:** 170+ unit, service and HTTP tests, plus `npm run test:smoke` (the real entrypoint against a local Postgres over the wire protocol and a fake Graph API). See CI.
 - **Not yet verified:** live sending through Meta, and running against the production database. That needs real credentials and a test number.
 - Tenant webhook deliveries are best effort (3 attempts in-process, no durable outbox).
 - Endpoint URLs are checked when registered; DNS that later resolves to a private address is not re-checked at delivery.
-- Inbound media is stored as the Meta media id; downloading media is not implemented.
+- Inbound media is not copied to storage; it is fetched from Meta on demand and becomes unavailable when Meta expires it.
 - There is no dashboard UI yet; the API is the product surface.

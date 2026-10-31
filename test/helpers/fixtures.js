@@ -98,6 +98,16 @@ export function fakeMeta() {
     async listTemplates() {
       return meta.templates;
     },
+    media: { info: { url: "https://lookaside.fbsbx.com/m/1", mime_type: "image/jpeg" }, body: Buffer.from("JPEGDATA"), contentType: "image/jpeg", error: null, calls: [] },
+    async getMediaInfo(call) {
+      meta.media.calls.push(call);
+      if (meta.media.error) throw meta.media.error;
+      return meta.media.info;
+    },
+    async downloadMedia(call) {
+      meta.media.calls.push(call);
+      return { body: meta.media.body, contentType: meta.media.contentType };
+    },
   };
   return meta;
 }
