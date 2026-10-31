@@ -389,3 +389,8 @@ test("broadcast endpoints", async () => {
   assert.equal((await call("POST", `/v1/broadcasts/${id}/cancel`, { token: key })).json.broadcast.state, "cancelled");
   assert.equal((await call("POST", "/v1/broadcasts", { token: key, body: { name: "" } })).status, 400);
 });
+
+test("AI settings endpoints are dashboard-only", async () => {
+  const { key } = await onboard({ credits: 0 });
+  assert.equal((await call("GET", "/v1/ai/settings", { token: key })).status, 403);
+});

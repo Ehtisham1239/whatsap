@@ -21,7 +21,7 @@ export function keywordIntent(text) {
   return null;
 }
 
-export function createInboundService({ db, appSecret, now = () => new Date(), notifier = { emit() {} }, log = () => {} }) {
+export function createInboundService({ db, appSecret, now = () => new Date(), notifier = { emit() {} }, onInboundMessage = () => {}, log = () => {} }) {
   async function handleInbound(q, e, at) {
     const conn = await repo.findWabaByPhoneNumberId(q, e.phoneNumberId);
     if (!conn) return { skipped: "unknown_number" };
@@ -52,6 +52,7 @@ export function createInboundService({ db, appSecret, now = () => new Date(), no
     await repo.touchConversation(q, conversation.id, e.timestamp, { reopen: true });
 
     const out = [{ type: "message.received", data: presentMessage(message) }];
+    const followUp = { tenantId: conn.tenant_id, conversationId: conversation.id, messageId: message.id };
     const intent = keywordIntent(inboundText(e));
     if (intent === "opt_out" && !contact.opted_out_at) {
       await repo.setContactOptOut(q, contact.id, at);
@@ -60,7 +61,8 @@ export function createInboundService({ db, appSecret, now = () => new Date(), no
       await repo.setContactOptOut(q, contact.id, null);
       out.push({ type: "contact.opted_in", data: { contact_id: contact.id, phone } });
     }
-    return { tenantId: conn.tenant_id, notify: out };
+    // An opt-out/opt-in keyword is answered by the platform, not the assistant.
+    return { tenantId: conn.tenant_id, notify: out, inbound: intent ? null : followUp };
   }
 
   async function handleStatus(q, e, at) {
@@ -122,6 +124,7 @@ export function createInboundService({ db, appSecret, now = () => new Date(), no
         if (list.every((r) => r?.skipped)) summary.skipped++;
         else summary.processed++;
         for (const r of list) for (const n of r?.notify ?? []) notifier.emit(r.tenantId, n.type, n.data);
+        for (const r of list) if (r?.inbound) onInboundMessage(r.inbound);
       }
       if (summary.skipped) log({ level: "info", msg: "webhook events skipped", ...summary });
       return summary;

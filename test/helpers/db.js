@@ -6,7 +6,7 @@ import { migrate } from "../../src/db/migrate.js";
 export const MIGRATIONS_DIR = fileURLToPath(new URL("../../db/migrations", import.meta.url));
 
 const TABLES = [
-  "user_sessions", "users", "broadcasts",
+  "user_sessions", "users", "broadcasts", "ai_assistants",
   "messages", "credit_ledger", "idempotency_keys", "webhook_events", "webhook_endpoints", "conversation_windows",
   "conversations", "templates", "api_keys", "contacts", "waba_connections", "wallets", "tenants",
 ];

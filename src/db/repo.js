@@ -549,3 +549,36 @@ export async function cancelBroadcastMessages(q, broadcastId) {
 export async function setBroadcastStatus(q, id, status) {
   await q.query("update broadcasts set status = $2 where id = $1", [id, status]);
 }
+
+// ---- AI assistant ---------------------------------------------------------------
+
+export async function getAiAssistant(q, tenantId) {
+  return one(await q.query("select * from ai_assistants where tenant_id = $1", [tenantId]));
+}
+
+export async function saveAiAssistant(q, tenantId, s, now) {
+  return one(
+    await q.query(
+      `insert into ai_assistants (tenant_id, enabled, business_name, instructions, handoff_message, updated_at) values ($1,$2,$3,$4,$5,$6)
+       on conflict (tenant_id) do update set enabled = excluded.enabled, business_name = excluded.business_name,
+         instructions = excluded.instructions, handoff_message = excluded.handoff_message, updated_at = excluded.updated_at
+       returning *`,
+      [tenantId, s.enabled, s.business_name, s.instructions, s.handoff_message, now],
+    ),
+  );
+}
+
+/** Recent customer-visible messages of a conversation, oldest first. */
+export async function recentConversationMessages(q, conversationId, limit = 20) {
+  return (
+    await q.query(
+      `select * from (select * from messages where conversation_id = $1 and mode <> 'note' and status not in ('failed', 'cancelled', 'scheduled')
+         order by created_at desc, id desc limit $2) m order by created_at, id`,
+      [conversationId, limit],
+    )
+  ).rows;
+}
+
+export async function countAiReplies(q, conversationId, since) {
+  return one(await q.query("select count(*)::int as n from messages where conversation_id = $1 and sent_via = 'ai' and created_at >= $2", [conversationId, since])).n;
+}

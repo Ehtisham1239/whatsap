@@ -229,3 +229,5 @@ pre.code { background: var(--panel-2); border: 1px solid var(--line); border-rad
 .card > * + * { margin-top: 10px; }
 .grid2 > .wide { grid-column: 1 / -1; }
 .logo-mark { font-size: 12px; letter-spacing: -0.02em; }
+input[type="checkbox"], input[type="radio"] { width: auto; flex: none; margin: 0; accent-color: var(--brand); }
+label.row { display: flex; align-items: center; gap: 8px; }

@@ -17,6 +17,7 @@
     "test:ui": "node scripts/e2e-ui.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "pg": "8.23.1"
   },
   "devDependencies": {

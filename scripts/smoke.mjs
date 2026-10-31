@@ -18,7 +18,7 @@ async function api(method, path, { token, body, headers = {} } = {}) {
 let server;
 try {
   const m1 = await run(["migrate"]);
-  check(m1.code === 0 && m1.output.includes("applied 5 migration(s)"), "migrate applies the schema");
+  check(m1.code === 0 && m1.output.includes("applied 6 migration(s)"), "migrate applies the schema");
   const m2 = await run(["migrate"]);
   check(m2.code === 0 && m2.output.includes("up to date"), "migrate is idempotent");
 

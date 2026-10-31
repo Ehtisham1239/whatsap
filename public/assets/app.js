@@ -8,6 +8,7 @@ const POLL_MS = 5000;
 const ROUTES = {
   dashboard: "Dashboard",
   inbox: "Inbox",
+  assistant: "AI Assistant",
   broadcasts: "Broadcasts",
   contacts: "Contacts",
   templates: "Templates",
@@ -84,7 +85,7 @@ function route() {
     state.numbers = r.data;
     updateBanner();
   }, () => {});
-  const render = { dashboard: renderDashboard, inbox: refreshConversations, broadcasts: renderBroadcasts, contacts: () => renderContacts(true), templates: renderTemplates, wallet: () => renderWallet(true), developers: renderDevelopers, team: renderTeam, settings: renderSettings }[view];
+  const render = { dashboard: renderDashboard, inbox: refreshConversations, assistant: renderAssistant, broadcasts: renderBroadcasts, contacts: () => renderContacts(true), templates: renderTemplates, wallet: () => renderWallet(true), developers: renderDevelopers, team: renderTeam, settings: renderSettings }[view];
   Promise.resolve(render()).catch((err) => toast(errorMessage(err), "error"));
 }
 
@@ -186,6 +187,25 @@ function renderThread(keepScroll) {
       c.opted_out ? h("span", { class: "badge warn" }, "Opted out") : null,
       c.blocked ? h("span", { class: "badge warn" }, "Blocked") : null,
       h("span", { class: "badge grey" }, c.status),
+      h(
+        "button",
+        {
+          type: "button",
+          class: "btn small",
+          title: c.ai_paused ? "The AI assistant is not replying in this conversation" : "The AI assistant may reply in this conversation",
+          onclick: async () => {
+            try {
+              await api.post(`/v1/conversations/${c.id}/ai`, { paused: !c.ai_paused });
+              c.ai_paused = !c.ai_paused;
+              toast(c.ai_paused ? "AI paused for this conversation" : "AI resumed for this conversation");
+              renderThread(true);
+            } catch (err) {
+              toast(errorMessage(err), "error");
+            }
+          },
+        },
+        c.ai_paused ? "✦ Resume AI" : "✦ Pause AI",
+      ),
       h("button", { type: "button", class: "btn small", onclick: () => setStatus(c, c.status === "resolved" ? "open" : "resolved") }, c.status === "resolved" ? "Reopen" : "Resolve"),
       c.status === "open" ? h("button", { type: "button", class: "btn small", onclick: () => setStatus(c, "pending") }, "Mark pending") : null,
       h("button", { type: "button", class: "btn small danger", onclick: () => toggleBlock(c) }, c.blocked ? "Unblock" : "Block"),
@@ -1018,4 +1038,76 @@ async function renderBroadcasts() {
     }
   });
   page.append(card("New broadcast", form));
+}
+
+// ---------- AI assistant ----------
+async function renderAssistant() {
+  const page = clear($("#view-assistant"));
+  const { available, model, settings } = await api.get("/v1/ai/settings");
+  const canEdit = isManager();
+  const enabled = h("input", { type: "checkbox", name: "enabled", checked: settings.enabled, disabled: !canEdit });
+  const businessName = h("input", { name: "business_name", maxlength: 120, value: settings.business_name, placeholder: state.me.tenant.name, disabled: !canEdit });
+  const instructions = h("textarea", {
+    name: "instructions",
+    rows: 12,
+    maxlength: 12000,
+    disabled: !canEdit,
+    placeholder: "What you sell or teach, prices, timings, location, delivery, how to book, common questions and answers, what the assistant must never promise…",
+  });
+  instructions.value = settings.instructions;
+  const handoff = h("input", { name: "handoff_message", maxlength: 500, value: settings.handoff_message, placeholder: "Thanks! A teammate will reply to you shortly.", disabled: !canEdit });
+  const count = h("span", { class: "hint" });
+  const updateCount = () => (count.textContent = `${instructions.value.length.toLocaleString("en-US")} / 12,000`);
+  instructions.addEventListener("input", updateCount);
+  updateCount();
+
+  const form = h(
+    "form",
+    { class: "grid2" },
+    h("label", { class: "row wide" }, enabled, h("b", {}, "Reply to customers automatically")),
+    h("label", {}, h("span", {}, "Business name the assistant uses"), businessName),
+    h("label", {}, h("span", {}, "Message sent when handing over to the team (optional)"), handoff),
+    h("label", { class: "wide" }, h("span", {}, "Business information and rules"), instructions, count),
+    canEdit ? h("div", { class: "row" }, h("button", { class: "btn primary", type: "submit" }, "Save")) : h("p", { class: "muted small" }, "Only owners and admins can change these settings."),
+  );
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const r = await submitting(form, () =>
+      api.patch("/v1/ai/settings", { enabled: enabled.checked, business_name: businessName.value, instructions: instructions.value, handoff_message: handoff.value }),
+    );
+    if (r) toast(r.settings.enabled ? "Saved. The assistant is replying to new messages." : "Saved. The assistant is off.");
+  });
+
+  // try it
+  const question = h("input", { placeholder: "e.g. Kya trial class free hai?", maxlength: 2000, "aria-label": "Test message" });
+  const answer = h("div", { class: "bubble out hidden", role: "status" });
+  const tryForm = h("form", { class: "row" }, h("div", { class: "grow" }, question), h("button", { class: "btn", type: "submit", disabled: !available }, "Ask"));
+  tryForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!question.value.trim()) return;
+    answer.classList.remove("hidden");
+    answer.textContent = "Thinking…";
+    const r = await submitting(tryForm, () => api.post("/v1/ai/test", { message: question.value, settings: { business_name: businessName.value, instructions: instructions.value, handoff_message: handoff.value } }));
+    clear(answer);
+    if (!r) return answer.classList.add("hidden");
+    answer.append(h("div", {}, r.reply || "(no reply text)"), r.handoff ? h("div", { class: "err" }, `Would hand over to the team: ${r.reason}`) : null);
+  });
+
+  page.append(
+    h("div", { class: "row" }, h("h2", {}, "AI Assistant"), h("span", { class: "spacer" }), h("span", { class: "badge grey" }, model)),
+    available ? null : h("div", { class: "banner" }, "The AI assistant is not switched on for this platform yet (the operator needs to add an AI API key). You can prepare your settings now."),
+    card(
+      "How it works",
+      h(
+        "ul",
+        { class: "small" },
+        h("li", {}, "When a customer writes, the assistant answers using only the information below."),
+        h("li", {}, "If it is unsure, or the customer wants a person, it hands the chat to your team: the chat gets a note and the assistant stops replying there until someone presses ✦ Resume AI."),
+        h("li", {}, "When a teammate replies in a chat, the assistant stays out of it for 30 minutes."),
+        h("li", {}, "Opt-out words such as STOP are handled automatically and never answered by the AI."),
+      ),
+    ),
+    card("Settings", form),
+    card("Try it (nothing is sent)", tryForm, answer),
+  );
 }

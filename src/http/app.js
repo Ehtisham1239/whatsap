@@ -140,7 +140,7 @@ function bearer(req) {
  * services: { db, accounts, messaging, inbound, templates }
  * config:   { adminToken, metaVerifyToken, trustProxy, rateLimit }
  */
-export function createApp({ db, accounts, messaging, inbound, templates, media, users, broadcasts }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
+export function createApp({ db, accounts, messaging, inbound, templates, media, users, broadcasts, ai }, config = {}, { log = () => {}, now = () => new Date() } = {}) {
   const router = createRouter();
   const apiLimiter = createRateLimiter(config.rateLimit ?? { capacity: 50, refillPerSecond: 20 });
   const adminLimiter = createRateLimiter(config.adminRateLimit ?? { capacity: 20, refillPerSecond: 2 });
@@ -293,6 +293,14 @@ export function createApp({ db, accounts, messaging, inbound, templates, media, 
   );
   router.post("/v1/messages/:id/cancel", api(async ({ auth, params }) => ({ status: 200, body: { message: await messaging.cancel(auth, params.id) } })));
 
+  router.get("/v1/ai/settings", api(async ({ auth }) => ({ status: 200, body: await ai.getSettings(auth) }), { sessionOnly: true }));
+  router.patch("/v1/ai/settings", api(async ({ auth, body }) => ({ status: 200, body: await ai.saveSettings(auth, body) }), { sessionOnly: true, manager: true }));
+  router.post("/v1/conversations/:id/ai", api(async ({ auth, params, body }) => {
+    if (typeof body.paused !== "boolean") throw badRequest("paused must be true or false");
+    return { status: 200, body: { conversation: await ai.setPaused(auth, params.id, body.paused) } };
+  }));
+  router.post("/v1/ai/test", api(async ({ auth, body }) => ({ status: 200, body: await ai.test(auth, body) }), { sessionOnly: true }));
+
   router.get("/v1/broadcasts", api(async ({ auth }) => ({ status: 200, body: { data: await broadcasts.list(auth) } })));
   router.post("/v1/broadcasts", api(async ({ auth, body }) => ({ status: 201, body: { broadcast: await broadcasts.create(auth, body) } })));
   router.get("/v1/broadcasts/:id", api(async ({ auth, params }) => ({ status: 200, body: { broadcast: await broadcasts.get(auth, params.id) } })));
@@ -370,6 +378,7 @@ export function createApp({ db, accounts, messaging, inbound, templates, media, 
             last_message_at: new Date(c.last_message_at).toISOString(),
             last_preview: c.last_preview ? String(c.last_preview).slice(0, 140) : null,
             window_expires_at: c.window_expires_at ? new Date(c.window_expires_at).toISOString() : null,
+            ai_paused: Boolean(c.ai_paused),
             opted_out: Boolean(c.opted_out_at),
             blocked: Boolean(c.blocked_at),
           })),

@@ -8,6 +8,16 @@ Tenants (your customers) get API keys and send WhatsApp messages from their own 
 - Plain `node:http` server and `node:test` tests
 - No Supabase client keys are used. The server connects to Postgres directly, and RLS (enabled, no policies) blocks the public `anon`/`authenticated` roles.
 
+## AI assistant
+
+Each workspace can switch on an assistant (AI Assistant page) that answers inbound WhatsApp messages with Claude, using only the business information the workspace writes there. It runs after the webhook is stored, in the background.
+
+- Calls `claude-opus-5-5` at effort `low` with server-side refusal fallbacks (`fallbacks: "default"`), the last 20 messages as context, and one tool, `handoff_to_human` (strict schema).
+- A handoff (tool call, refusal, rejected request or the 10-replies-per-hour cap) pauses the assistant for that conversation, adds an internal note and optionally sends the workspace's handoff message. Teammates resume it with ✦ Resume AI.
+- When a teammate replies in a conversation, the assistant stays out of it for 30 minutes. STOP/START keywords, opted-out and blocked contacts are never answered by the AI.
+- The system prompt tells the model to treat customer text as data and never invent prices or policies. Replies are plain WhatsApp text (≤ 4,096 characters) sent through the normal pipeline, so window rules, idempotency and logging still apply.
+- "Try it" on the page drafts an answer without sending anything.
+
 ## Dashboard
 
 | Page | Who |
@@ -28,6 +38,7 @@ Sessions are HttpOnly, SameSite=Lax cookies (7 days, sliding); only a SHA-256 of
 | `TOKEN_ENCRYPTION_KEY`, `API_KEY_PEPPER`, `ADMIN_TOKEN` | Random secrets (see `.env.example`); never rotate the first two casually |
 | `CRON_SECRET` | ≥ 16 chars. Vercel Cron sends it to `/internal/cron` |
 | `META_APP_SECRET`, `META_VERIFY_TOKEN` | Optional until WhatsApp is connected; the webhook answers 503 without them |
+| `ANTHROPIC_API_KEY` | Optional. Turns on the AI assistant (Claude). `AI_MODEL` (default `claude-opus-5-5`) and `AI_EFFORT` (default `low`) tune it |
 | `SIGNUP_CREDITS`, `ALLOW_SIGNUP`, `PRICE_*` | Optional |
 
 Vercel Hobby crons run once a day, which only covers cleanup. Migration `0005_cron_job.sql` therefore schedules a Supabase `pg_cron` job that POSTs `/internal/cron` every minute through `pg_net`, reading the URL and secret from Supabase Vault (`platform_cron_url`, `platform_cron_secret`). It is active on wa-platform. Scheduled messages and the stuck-send sweeper need `/internal/cron` called every minute: use a Pro cron (`* * * * *`), Supabase `pg_cron` + `pg_net`, or any external scheduler sending `Authorization: Bearer $CRON_SECRET`. If any required variable is missing, every request returns 503 listing the missing names.

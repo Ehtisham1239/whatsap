@@ -142,6 +142,16 @@ try {
   check(completed && stack.metaCalls.filter((c) => c.body.includes("Hina") || c.body.includes("Asad")).length === 2, "broadcast sent to every CSV recipient");
   await shot("09-broadcasts");
 
+  // AI assistant settings (no AI key in this harness: settings save, testing is disabled)
+  await page.goto(`${base}/app#/assistant`);
+  await page.waitForSelector("#view-assistant .banner:has-text('not switched on')");
+  await page.check('#view-assistant input[name="enabled"]');
+  await page.fill('#view-assistant textarea[name="instructions"]', "We sell handmade shoes. Delivery in 3 days across Pakistan. Prices start at Rs 4,500.");
+  await page.click("#view-assistant button:has-text('Save')");
+  await page.waitForSelector(".toast:has-text('assistant is replying')");
+  check(await page.isDisabled("#view-assistant button:has-text('Ask')"), "AI assistant settings save; testing is disabled without an API key");
+  await shot("10-assistant");
+
   // change password, sign out, sign in again; agent sees restricted pages
   await page.goto(`${base}/app#/settings`);
   await page.fill('input[name="current_password"]', "tulip-orbit-cedar-42");

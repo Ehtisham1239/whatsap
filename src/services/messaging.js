@@ -43,7 +43,7 @@ export function createMessagingService({
   }
 
   /** Creates the message row (queued or scheduled) and holds its credits, all in one transaction. */
-  async function enqueue(auth, req, idempotencyKey) {
+  async function enqueue(auth, req, idempotencyKey, sentVia = "api") {
     const at = now();
     return db.tx(async (q) => {
       const tenant = await repo.getTenant(q, auth.tenant_id);
@@ -97,7 +97,7 @@ export function createMessagingService({
         status: req.schedule_at ? "scheduled" : "queued",
         credits_held: price.credits,
         conversation_category: price.category,
-        sent_via: "api",
+        sent_via: sentVia,
         api_key_id: auth.id ?? null,
         idempotency_key: idempotencyKey,
         scheduled_for: req.schedule_at ?? null,
@@ -182,7 +182,7 @@ export function createMessagingService({
      * POST /v1/messages. Returns { status, body, replayed? }.
      * @param auth row from authenticateApiKey (id, tenant_id, waba_connection_id)
      */
-    async send(auth, body, rawIdempotencyKey) {
+    async send(auth, body, rawIdempotencyKey, { sentVia = "api" } = {}) {
       const idem = validateIdempotencyKey(rawIdempotencyKey);
       if (idem.error) throw badRequest(idem.error);
       const parsed = validateSendRequest(body, { now: now(), defaultCountryCode });
@@ -201,7 +201,7 @@ export function createMessagingService({
 
       let result;
       try {
-        const message = await enqueue(auth, parsed.value, key);
+        const message = await enqueue(auth, parsed.value, key, sentVia);
         const final = message.status === "queued" ? await dispatch(message.id) : message;
         result = { status: 202, body: { message: presentMessage(final) } };
       } catch (err) {
