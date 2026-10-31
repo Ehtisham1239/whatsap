@@ -30,7 +30,7 @@ Sessions are HttpOnly, SameSite=Lax cookies (7 days, sliding); only a SHA-256 of
 | `META_APP_SECRET`, `META_VERIFY_TOKEN` | Optional until WhatsApp is connected; the webhook answers 503 without them |
 | `SIGNUP_CREDITS`, `ALLOW_SIGNUP`, `PRICE_*` | Optional |
 
-Vercel Hobby crons run once a day, which only covers cleanup. Scheduled messages and the stuck-send sweeper need `/internal/cron` called every minute: use a Pro cron (`* * * * *`), Supabase `pg_cron` + `pg_net`, or any external scheduler sending `Authorization: Bearer $CRON_SECRET`. If any required variable is missing, every request returns 503 listing the missing names.
+Vercel Hobby crons run once a day, which only covers cleanup. Migration `0005_cron_job.sql` therefore schedules a Supabase `pg_cron` job that POSTs `/internal/cron` every minute through `pg_net`, reading the URL and secret from Supabase Vault (`platform_cron_url`, `platform_cron_secret`). It is active on wa-platform. Scheduled messages and the stuck-send sweeper need `/internal/cron` called every minute: use a Pro cron (`* * * * *`), Supabase `pg_cron` + `pg_net`, or any external scheduler sending `Authorization: Bearer $CRON_SECRET`. If any required variable is missing, every request returns 503 listing the missing names.
 
 ## Run locally
 
