@@ -61,7 +61,7 @@ describe("inbound messages", () => {
     const [m] = await repo.listMessages(t.db, tenant.id, {});
     assert.equal(m.direction, "inbound");
     assert.equal(m.status, "received");
-    assert.deepEqual(m.content, { from: PHONE, body: "Hello" });
+    assert.deepEqual(m.content, { from: PHONE, sent_at: T0.toISOString(), body: "Hello" });
     assert.deepEqual(m.created_at, T0);
     assert.deepEqual(notifier.events.map((e) => [e.tenantId, e.type]), [[tenant.id, "message.received"]]);
   });

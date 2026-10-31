@@ -54,6 +54,7 @@ async function enable(extra = {}) {
   return ai.saveSettings(owner, { enabled: true, business_name: "Acme Academy", instructions: INFO, handoff_message: "A teammate will reply shortly.", ...extra });
 }
 async function customerSays(id, text) {
+  clock.advance(1);
   const payload = JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: conn.waba_id, changes: [{ field: "messages", value: { metadata: { phone_number_id: conn.phone_number_id }, contacts: [{ wa_id: PHONE, profile: { name: "Ali" } }], messages: [{ from: PHONE, id, timestamp: String(Math.floor(clock().getTime() / 1000)), type: "text", text: { body: text } }] } }] }] });
   await inbound.handle(Buffer.from(payload), "sha256=" + createHmac("sha256", APP_SECRET).update(payload).digest("hex"));
   await ai.drain();

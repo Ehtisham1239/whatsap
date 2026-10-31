@@ -33,7 +33,7 @@ export function createInboundService({ db, appSecret, now = () => new Date(), no
     const window = nextWindow(existing, e.timestamp, e.ctwa ? "ctwa" : "user");
     await repo.saveWindow(q, { tenantId: conn.tenant_id, contactId: contact.id, wabaConnectionId: conn.id, window });
 
-    const conversation = await repo.getOrCreateConversation(q, { tenantId: conn.tenant_id, contactId: contact.id, wabaConnectionId: conn.id, now: e.timestamp });
+    const conversation = await repo.getOrCreateConversation(q, { tenantId: conn.tenant_id, contactId: contact.id, wabaConnectionId: conn.id, now: at });
     const message = await repo.insertMessage(q, {
       tenant_id: conn.tenant_id,
       conversation_id: conversation.id,
@@ -42,14 +42,16 @@ export function createInboundService({ db, appSecret, now = () => new Date(), no
       direction: "inbound",
       mode: "custom",
       type: e.type,
-      content: { from: phone, ...e.content, ...(e.replyTo ? { reply_to: e.replyTo } : {}), ...(e.ctwa ? { ctwa: true } : {}) },
+      content: { from: phone, sent_at: e.timestamp.toISOString(), ...e.content, ...(e.replyTo ? { reply_to: e.replyTo } : {}), ...(e.ctwa ? { ctwa: true } : {}) },
       status: "received",
       wamid: e.wamid,
       sent_via: "webhook",
-      created_at: e.timestamp,
+      // Ordered by receipt time, on the same clock as our own replies; Meta's
+      // timestamp has one-second precision and can tie with or precede them.
+      created_at: at,
     });
     if (!message) return { skipped: "duplicate_wamid" };
-    await repo.touchConversation(q, conversation.id, e.timestamp, { reopen: true });
+    await repo.touchConversation(q, conversation.id, at, { reopen: true });
 
     const out = [{ type: "message.received", data: presentMessage(message) }];
     const followUp = { tenantId: conn.tenant_id, conversationId: conversation.id, messageId: message.id };
