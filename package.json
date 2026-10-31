@@ -17,7 +17,6 @@
     "test:ui": "node scripts/e2e-ui.mjs"
   },
   "dependencies": {
-    "@vercel/functions": "^3.10.5",
     "pg": "8.23.1"
   },
   "devDependencies": {

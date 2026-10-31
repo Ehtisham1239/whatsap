@@ -1,11 +1,21 @@
 // Vercel entry point: every request is rewritten here (see vercel.json).
 // Services are created once per function instance and reused across requests.
-import { waitUntil } from "@vercel/functions";
 import { loadConfig } from "../src/config.js";
 import { createPgDatabase } from "../src/db/database.js";
 import { createApp } from "../src/http/app.js";
 import { buildServices } from "../src/index.js";
 import { runMaintenance } from "../src/worker.js";
+
+/**
+ * Keeps the function alive for background work after the response, using the
+ * request context Vercel's runtime exposes (what @vercel/functions' waitUntil
+ * reads). Outside Vercel the promise simply runs to completion.
+ */
+function waitUntil(promise) {
+  const ctx = globalThis[Symbol.for("@vercel/request-context")]?.get?.();
+  if (ctx?.waitUntil) ctx.waitUntil(promise);
+  else promise.catch(() => {});
+}
 
 const log = (entry) => console.log(JSON.stringify({ time: new Date().toISOString(), ...entry }));
 let ready;
